@@ -1,7 +1,6 @@
 /**
- * Dynamic Plain-Text Report Formatter
- * Conforms strictly to PRD v3.1 Section 12:
- * "Report generation must reflect actual user-configured pumps and products, not a fixed list."
+ * Station Closing Report Formatter
+ * Generates the exact Ghanaian OMC station report format specified by the station manager.
  */
 
 import { DailyReport } from '../../types/report';
@@ -15,33 +14,35 @@ export function formatNumberWithCommas(val: number | null | undefined, decimals 
 }
 
 export function formatVariance(val: number | null | undefined): string {
-  if (val === null || val === undefined || isNaN(val)) return '—L';
+  if (val === null || val === undefined || isNaN(val)) return '—';
   const sign = val > 0 ? '+' : '';
-  return `${sign}${val.toLocaleString('en-US', { maximumFractionDigits: 1 })}L`;
+  return `${sign}${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export function formatReportDate(dateStr: string): string {
+export function formatReportDateDDMMYYYY(dateStr: string): string {
   try {
-    const d = new Date(dateStr + 'T00:00:00');
-    return d.toLocaleDateString('en-GB', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-    });
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return dateStr;
   } catch {
     return dateStr;
   }
 }
 
+export function formatReportDate(dateStr: string): string {
+  return formatReportDateDDMMYYYY(dateStr);
+}
+
 /**
- * Generates the standardized OMC Daily Station Report string
- * suitable for WhatsApp, SMS, Telegram, or Clipboard export.
+ * Generates the authentic station closing report formatted for WhatsApp, SMS, or Telegram
  */
 export function generateStandardReportText(report: DailyReport): string {
-  const formattedDate = formatReportDate(report.reportDate);
-  const stationHeader = `${(report.stationNameSnapshot || 'DAILY STATION REPORT').toUpperCase()} — ${formattedDate}`;
+  const formattedDate = formatReportDateDDMMYYYY(report.reportDate);
+  const stationHeader = (report.stationNameSnapshot || 'OBORPAH ASESEWA').toUpperCase();
+  const shiftHeader = report.shiftType || 'Evening Report';
 
-  // Find unique products in this report
   const productCodes = Array.from(
     new Set([
       ...report.pumps.map((p) => p.productCodeSnapshot),
@@ -50,66 +51,110 @@ export function generateStandardReportText(report: DailyReport): string {
   );
 
   const productBlocks: string[] = [];
+  const analogueBlocks: string[] = [];
 
   productCodes.forEach((code) => {
-    // 1. Pumps for this product
-    const pumpsForProduct = report.pumps.filter((p) => p.productCodeSnapshot === code);
-    const pumpMeters = pumpsForProduct
+    const pumpsForProduct = report.pumps.filter((p) => p.productCodeSnapshot === code && !p.isIdleOrOptional);
+    const stock = report.stocks.find((s) => s.productCodeSnapshot === code);
+    const unitPrice = report.productPrices?.[code] ?? (code === 'PMS' ? 16.59 : code === 'AGO' ? 18.39 : 15.00);
+
+    const stockVal = stock?.physicalClosingStock !== null && stock?.physicalClosingStock !== undefined
+      ? formatNumberWithCommas(stock.physicalClosingStock, 0)
+      : '—';
+
+    // Pump closing readings lines e.g. S1=25332.02
+    const pumpLines = pumpsForProduct
       .map((p) => {
         const val = p.closingMeter;
-        const formatted = val !== null && val !== undefined ? `${formatNumberWithCommas(val, 2)}L` : '…L';
-        return `${p.pumpLabelSnapshot} Closing Meter ${formatted}`;
+        const valStr = val !== null && val !== undefined ? formatNumberWithCommas(val, 2) : '—';
+        return `${p.pumpLabelSnapshot}=${valStr}`;
       })
-      .join('; ');
+      .join('\n');
 
-    const totalSales = pumpsForProduct.reduce((sum, p) => sum + (p.litresSold || 0), 0);
+    const totalLitres = pumpsForProduct.reduce((sum, p) => sum + (p.litresSold || 0), 0);
+    const totalGhs = Math.round(totalLitres * unitPrice);
 
-    // 2. Stock for this product
-    const stockEntries = report.stocks.filter((s) => s.productCodeSnapshot === code);
-    const primaryStock = stockEntries[0];
+    const varianceVal = stock?.variance !== null && stock?.variance !== undefined
+      ? formatVariance(stock.variance)
+      : '—';
 
-    const physical = primaryStock?.physicalClosingStock !== null && primaryStock?.physicalClosingStock !== undefined
-      ? `${primaryStock.physicalClosingStock.toLocaleString('en-US')}L`
-      : '…L';
-    const theoretical = primaryStock?.theoreticalClosingStock !== null && primaryStock?.theoreticalClosingStock !== undefined
-      ? `${Math.round(primaryStock.theoreticalClosingStock).toLocaleString('en-US')}L`
-      : '…L';
-    const variance = primaryStock ? formatVariance(primaryStock.variance) : '—L';
+    const block = [
+      `${code}`,
+      `Stock = ${stockVal}`,
+      `Current Price @ ¢${unitPrice.toFixed(2)}`,
+      '',
+      pumpLines,
+      '',
+      `Litres Sold = ${Math.round(totalLitres)}`,
+      `Total Litres Sold= ${formatNumberWithCommas(totalLitres, 2)}@ ¢${unitPrice.toFixed(2)}`,
+      `${code} Sales = ¢${totalGhs.toLocaleString()}`,
+      '',
+      `Variance = ${varianceVal}`,
+    ].join('\n');
 
-    const line = `${code}: ${pumpMeters || 'No pumps'}. Total ${code} Sales: ${formatNumberWithCommas(totalSales, 2)}L. Physical Stock: ${physical}. Theoretical Stock: ${theoretical}. Variance: ${variance}.`;
-    productBlocks.push(line);
+    productBlocks.push(block);
+
+    // Analogue / mechanical totalizer readings
+    const pumpsWithAnalogue = pumpsForProduct.filter((p) => p.analogueMeter && p.analogueMeter.trim() !== '');
+    if (pumpsWithAnalogue.length > 0) {
+      const aLines = pumpsWithAnalogue.map((p) => `${p.pumpLabelSnapshot}-${p.analogueMeter}`).join('\n');
+      analogueBlocks.push(`${code}\n${aLines}`);
+    }
   });
 
-  // Expenses Section
-  const validExpenses = report.expenses.filter((e) => e.amountGhs > 0 || e.description.trim() !== '');
-  const expenseItems = validExpenses
-    .map((e) => `${e.description || e.category} — GHS ${formatNumberWithCommas(e.amountGhs, 2)}`)
-    .join('; ');
+  // Cash Account Section
+  const totalSalesGhs = report.totalSalesGhs || 0;
+  const totalExpensesGhs = report.totalExpensesGhs || 0;
+  const cashToBank = report.cashToBankOrTill ?? (totalSalesGhs - totalExpensesGhs);
 
-  const totalExpenses = report.expenses.reduce((sum, e) => sum + (e.amountGhs || 0), 0);
-  const expensesLine = expenseItems
-    ? `EXPENSES: ${expenseItems}. Total Expenses: GHS ${formatNumberWithCommas(totalExpenses, 2)}.`
-    : `EXPENSES: None recorded. Total Expenses: GHS 0.00.`;
+  const expenseItemLines = report.expenses.length > 0
+    ? report.expenses
+        .filter((e) => e.amountGhs > 0 || e.description.trim() !== '')
+        .map((e) => `  - ${e.description || e.category}: ¢${formatNumberWithCommas(e.amountGhs, 2)}`)
+        .join('\n')
+    : '';
 
-  // Status line
-  const statusLine = `STATUS: ${report.status}`;
+  const hubtel = report.hubtel || { hubtelAccount: '', dashboardAmount: null, bankingWithHubtel: null };
+  const hubtelAccStr = hubtel.hubtelAccount ? `(${hubtel.hubtelAccount})` : '( )';
+  const hubtelDashStr = hubtel.dashboardAmount !== null && hubtel.dashboardAmount !== undefined
+    ? `¢ ${formatNumberWithCommas(hubtel.dashboardAmount, 2)}`
+    : '¢ ';
+  const bankingHubtelStr = hubtel.bankingWithHubtel !== null && hubtel.bankingWithHubtel !== undefined
+    ? `¢ ${formatNumberWithCommas(hubtel.bankingWithHubtel, 2)}`
+    : '¢ ';
 
-  // Warnings line if any unresolved
-  const warningsLine = report.warnings.length > 0
-    ? `\nWARNINGS: ${report.warnings.join('; ')}`
+  const cashAccountBlock = [
+    'CASH ACCOUNT',
+    `TOTAL- SALES                             ¢${Math.round(totalSalesGhs).toLocaleString()}`,
+    '',
+    'Less  Expenses: ',
+    expenseItemLines,
+    '',
+    `TOTAL EXPENSES     =¢${totalExpensesGhs > 0 ? formatNumberWithCommas(totalExpensesGhs, 2) : ''}`,
+    '',
+    `CASH TO BANK(or IN TILL)        = ¢ ${Math.round(cashToBank).toLocaleString()}`,
+    '',
+    `HUBTEL${hubtelAccStr}= `,
+    '',
+    `HUBTEL DASHBOARD AMOUNT= ${hubtelDashStr}`,
+    '',
+    `BANKING WITH HUBTEL  = ${bankingHubtelStr}`,
+  ].join('\n');
+
+  const analogueSection = analogueBlocks.length > 0
+    ? `\nANALOGUE READING\n${analogueBlocks.join('\n\n')}`
     : '';
 
   return [
     stationHeader,
+    shiftHeader,
+    formattedDate,
     '',
-    ...productBlocks.flatMap((block) => [block, '']),
-    expensesLine,
+    ...productBlocks,
     '',
-    statusLine,
-    warningsLine,
-  ]
-    .filter((line, idx, arr) => !(line === '' && arr[idx - 1] === ''))
-    .join('\n');
+    cashAccountBlock,
+    analogueSection,
+  ].join('\n');
 }
 
 export function getShareUrls(reportText: string) {

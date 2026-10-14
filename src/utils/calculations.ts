@@ -1,6 +1,6 @@
 /**
  * Business Logic & Calculation Engine for OMC Daily Reporting
- * Version 3.1 • Authoritative Calculation Rules
+ * Version 3.2 • Real-time GHS Sales, Unit Price, and Cash to Bank Calculations
  */
 
 import {
@@ -23,7 +23,7 @@ export function computePumpLitresSold(
   if (opening === null || closing === null) {
     return {
       litresSold: null,
-      warning: opening === null ? 'Missing opening meter' : 'Missing closing meter',
+      warning: opening === null ? 'Missing opening meter' : null,
     };
   }
 
@@ -35,9 +35,8 @@ export function computePumpLitresSold(
         warning: null,
       };
     } else {
-      // Flag closing < opening for review; do not silently assume meter rollover
       return {
-        litresSold: Math.max(0, closing - opening), // Or negative indicator
+        litresSold: Math.max(0, closing - opening),
         warning: `Closing meter (${closing}) is lower than opening (${opening}). Check for typo or confirm rollover.`,
       };
     }
@@ -72,11 +71,11 @@ export function computeVariance(
 ): number | null {
   if (physicalClosingStock === null || theoreticalClosingStock === null) return null;
   const diff = physicalClosingStock - theoreticalClosingStock;
-  return Math.round(diff * 10) / 10;
+  return Math.round(diff * 100) / 100;
 }
 
 /**
- * Recalculate an entire DailyReport given current readings and product configurations
+ * Recalculate an entire DailyReport given current readings, editable unit prices, and expenses
  */
 export function recalculateReport(
   report: DailyReport,
@@ -84,7 +83,22 @@ export function recalculateReport(
 ): DailyReport {
   const warnings: string[] = [];
 
-  // 1. Recalculate each pump reading
+  // Build price lookup map (PMS: 16.59, AGO: 18.39 default)
+  const priceMap: Record<string, number> = {
+    PMS: 16.59,
+    AGO: 18.39,
+    KERO: 15.00,
+    ...(report.productPrices || {}),
+  };
+
+  // If productsList provides updated prices, merge them
+  productsList.forEach((p) => {
+    if (p.unitPrice && !report.productPrices?.[p.code]) {
+      priceMap[p.code] = p.unitPrice;
+    }
+  });
+
+  // 1. Recalculate each pump reading and GHS sales
   const updatedPumps: ReportPumpReading[] = report.pumps.map((pump) => {
     const { litresSold, warning } = computePumpLitresSold(
       pump.openingMeter,
@@ -93,27 +107,41 @@ export function recalculateReport(
       pump.rolloverCapacity || 100000
     );
 
-    if (warning) {
+    if (warning && !pump.isIdleOrOptional) {
       warnings.push(`${pump.pumpLabelSnapshot}: ${warning}`);
     }
+
+    const unitPrice = priceMap[pump.productCodeSnapshot] || 16.59;
+    const amountGhs = litresSold !== null ? Math.round(litresSold * unitPrice * 100) / 100 : null;
 
     return {
       ...pump,
       litresSold,
+      unitPriceSnapshot: unitPrice,
+      amountGhs,
       warning,
     };
   });
 
-  // 2. Sum sales by product code
-  const productSalesMap: Record<string, number> = {};
+  // 2. Sum sales by product code (both litres and GHS)
+  const productLitresMap: Record<string, number> = {};
+  const productGhsMap: Record<string, number> = {};
+
   updatedPumps.forEach((p) => {
     const code = p.productCodeSnapshot;
-    productSalesMap[code] = (productSalesMap[code] || 0) + (p.litresSold || 0);
+    const litres = p.litresSold || 0;
+    const ghs = p.amountGhs || 0;
+    productLitresMap[code] = (productLitresMap[code] || 0) + litres;
+    productGhsMap[code] = (productGhsMap[code] || 0) + ghs;
   });
 
   // 3. Recalculate stock entries
   const updatedStocks: ReportStockEntry[] = report.stocks.map((stock) => {
-    const totalProductSales = productSalesMap[stock.productCodeSnapshot] || 0;
+    const code = stock.productCodeSnapshot;
+    const totalProductSales = productLitresMap[code] || 0;
+    const unitPrice = priceMap[code] || 16.59;
+    const productSalesGhs = Math.round(totalProductSales * unitPrice * 100) / 100;
+
     const theoretical = computeTheoreticalClosing(
       stock.openingStock,
       stock.receipts,
@@ -124,41 +152,54 @@ export function recalculateReport(
     let stockWarning: string | null = null;
     if (stock.openingStock === null) {
       stockWarning = 'Missing opening stock dip/record';
-      warnings.push(`${stock.productCodeSnapshot} ${stock.tankLabel}: Missing opening stock`);
     } else if (stock.physicalClosingStock === null) {
       stockWarning = 'Pending physical closing stock dipping';
     } else if (variance !== null && Math.abs(variance) > 150) {
-      stockWarning = `Significant variance detected (${variance > 0 ? '+' : ''}${variance}L)`;
-      warnings.push(`${stock.productCodeSnapshot} ${stock.tankLabel}: High variance (${variance > 0 ? '+' : ''}${variance}L)`);
+      stockWarning = `Significant variance (${variance > 0 ? '+' : ''}${variance}L)`;
+      warnings.push(`${code} ${stock.tankLabel}: High variance (${variance > 0 ? '+' : ''}${variance}L)`);
     }
 
     return {
       ...stock,
       daySales: Math.round(totalProductSales * 100) / 100,
+      unitPriceSnapshot: unitPrice,
+      productSalesGhs,
       theoreticalClosingStock: theoretical,
       variance,
       warning: stockWarning,
     };
   });
 
-  // 4. Determine auto status progression if currently Draft
-  let currentStatus = report.status;
-  const hasAnyClosingEntered = updatedPumps.some((p) => p.closingMeter !== null);
-  const allClosingEntered = updatedPumps.length > 0 && updatedPumps.every((p) => p.closingMeter !== null);
-  const allPhysicalStockEntered = updatedStocks.length > 0 && updatedStocks.every((s) => s.physicalClosingStock !== null);
+  // 4. Calculate Cash Account totals
+  // Total sales across all products
+  let totalSalesGhs = 0;
+  Object.values(productGhsMap).forEach((val) => {
+    totalSalesGhs += val;
+  });
+  totalSalesGhs = Math.round(totalSalesGhs * 100) / 100;
 
-  if (currentStatus === 'Draft' && hasAnyClosingEntered) {
+  // Total expenses
+  const totalExpensesGhs = report.expenses.reduce((sum, e) => sum + (e.amountGhs || 0), 0);
+
+  // Cash to Bank / In Till = Total Sales - Total Expenses
+  const cashToBankOrTill = Math.round((totalSalesGhs - totalExpensesGhs) * 100) / 100;
+
+  // 5. Determine status
+  let currentStatus = report.status;
+  const hasAnyClosing = updatedPumps.some((p) => p.closingMeter !== null);
+  if (currentStatus === 'Draft' && hasAnyClosing) {
     currentStatus = 'In Progress';
-  }
-  if (currentStatus === 'In Progress' && allClosingEntered && allPhysicalStockEntered && warnings.length === 0) {
-    currentStatus = 'Ready for Review';
   }
 
   return {
     ...report,
     status: currentStatus,
+    productPrices: priceMap,
     pumps: updatedPumps,
     stocks: updatedStocks,
+    totalSalesGhs,
+    totalExpensesGhs: Math.round(totalExpensesGhs * 100) / 100,
+    cashToBankOrTill,
     warnings,
     updatedAt: new Date().toISOString(),
   };

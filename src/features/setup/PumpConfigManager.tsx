@@ -13,6 +13,7 @@ import {
   addPump,
   updatePump,
   togglePumpActive,
+  deletePump,
   saveWorkspacePumps,
 } from '../../services/dataService';
 import {
@@ -29,6 +30,7 @@ import {
   EyeOff,
   Layers,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 
 interface PumpConfigManagerProps {
@@ -81,6 +83,14 @@ export const PumpConfigManager: React.FC<PumpConfigManagerProps> = ({
   const handleToggleActive = (pump: ConfiguredPump) => {
     togglePumpActive(userId, pump.id, !pump.isActive);
     onConfigChanged();
+  };
+
+  // Handle Remove / Delete Pump
+  const handleDeletePump = (pump: ConfiguredPump) => {
+    if (window.confirm(`Are you sure you want to remove nozzle "${pump.label}" from your station configuration?`)) {
+      deletePump(userId, pump.id);
+      onConfigChanged();
+    }
   };
 
   // Handle Move Up / Down
@@ -274,6 +284,16 @@ export const PumpConfigManager: React.FC<PumpConfigManagerProps> = ({
                             title={pump.isActive ? 'Deactivate Pump' : 'Reactivate Pump'}
                           >
                             {pump.isActive ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                          </button>
+
+                          {/* Delete Pump Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleDeletePump(pump)}
+                            className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors"
+                            title="Remove Pump from Station"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </div>

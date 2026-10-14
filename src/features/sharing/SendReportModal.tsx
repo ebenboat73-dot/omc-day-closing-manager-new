@@ -64,17 +64,19 @@ export const SendReportModal: React.FC<SendReportModalProps> = ({
         : `${missingOpenings.length} pump(s) missing opening readings: ${missingOpenings.map((p) => p.pumpLabelSnapshot).join(', ')}`,
   });
 
-  // 2. Missing closing meters
-  const missingClosings = report.pumps.filter((p) => p.closingMeter === null);
+  // 2. Missing closing meters (Non-compulsory: pumps not operated today are considered idle)
+  const activePumps = report.pumps.filter((p) => !p.isIdleOrOptional);
+  const enteredPumps = activePumps.filter((p) => p.closingMeter !== null);
+  const unenteredPumps = activePumps.filter((p) => p.closingMeter === null);
   checks.push({
     id: 'closing-meters',
-    label: 'Closing Meter Completion',
-    passed: missingClosings.length === 0,
-    severity: 'error',
+    label: 'Pump Readings Progress',
+    passed: enteredPumps.length > 0,
+    severity: enteredPumps.length === 0 ? 'error' : 'warning',
     message:
-      missingClosings.length === 0
-        ? `All ${report.pumps.length} pumps have recorded closing meter readings.`
-        : `${missingClosings.length} pump(s) pending closing meter readings: ${missingClosings.map((p) => p.pumpLabelSnapshot).join(', ')}`,
+      unenteredPumps.length === 0
+        ? `All ${activePumps.length} active pumps recorded.`
+        : `${enteredPumps.length} of ${activePumps.length} pumps recorded. (${unenteredPumps.length} unentered pumps are treated as idle and will not block sending).`,
   });
 
   // 3. Suspicious meter movements (closing < opening without rollover)

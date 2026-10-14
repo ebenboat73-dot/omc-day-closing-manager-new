@@ -1,6 +1,6 @@
 /**
  * Pump Meter Reading Card
- * PRD v3.1 Section 8 & 9: In-app camera, OCR suggestion, manager verification, rollover handling.
+ * Version 3.2 • Displays GHS Sales, Editable UP, Analogue Meter, In-App Camera, and Removable Pumps
  */
 
 import React, { useState } from 'react';
@@ -14,9 +14,11 @@ import {
   Sparkles,
   ChevronDown,
   ChevronUp,
-  Image as ImageIcon,
-  CheckCircle2,
   X,
+  Trash2,
+  Gauge,
+  PowerOff,
+  CheckCircle2,
 } from 'lucide-react';
 import { preprocessMeterImage } from '../ocr/imagePreprocessing';
 import { recognizeMeterImage } from '../ocr/ocrService';
@@ -25,7 +27,9 @@ interface PumpMeterCardProps {
   reading: ReportPumpReading;
   positionNumber: number;
   product?: ConfiguredProduct;
+  unitPrice?: number;
   onUpdate: (updated: Partial<ReportPumpReading>) => void;
+  onRemovePump?: (readingId: string) => void;
   onPreviewPhoto?: (url: string, title: string) => void;
   onOpenCamera?: (reading: ReportPumpReading) => void;
 }
@@ -34,7 +38,9 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
   reading,
   positionNumber,
   product,
+  unitPrice = 16.59,
   onUpdate,
+  onRemovePump,
   onPreviewPhoto,
   onOpenCamera,
 }) => {
@@ -48,26 +54,32 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
     closing: number | null,
     isRoll: boolean,
     cap = 100000
-  ): { litres: number | null; warning: string | null } => {
+  ): { litres: number | null; amount: number | null; warning: string | null } => {
     if (opening === null || closing === null) {
       return {
         litres: null,
+        amount: null,
         warning: opening === null ? 'Missing opening meter' : null,
       };
     }
     if (closing < opening) {
       if (isRoll) {
         const s = Math.max(0, (cap - opening) + closing);
-        return { litres: Math.round(s * 100) / 100, warning: null };
+        const l = Math.round(s * 100) / 100;
+        return { litres: l, amount: Math.round(l * unitPrice * 100) / 100, warning: null };
       } else {
+        const diff = Math.max(0, closing - opening);
         return {
-          litres: Math.max(0, closing - opening),
+          litres: diff,
+          amount: Math.round(diff * unitPrice * 100) / 100,
           warning: `Closing meter (${closing}) is lower than opening (${opening}). Check for typo or confirm rollover.`,
         };
       }
     }
+    const diff = Math.round((closing - opening) * 100) / 100;
     return {
-      litres: Math.round((closing - opening) * 100) / 100,
+      litres: diff,
+      amount: Math.round(diff * unitPrice * 100) / 100,
       warning: null,
     };
   };
@@ -77,13 +89,14 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
       onUpdate({
         closingMeter: null,
         litresSold: null,
+        amountGhs: null,
         isConfirmed: false,
       });
       return;
     }
     const val = parseFloat(valStr);
     if (!isNaN(val)) {
-      const { litres, warning } = computeSales(
+      const { litres, amount, warning } = computeSales(
         reading.openingMeter,
         val,
         reading.isRollover,
@@ -92,8 +105,9 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
       onUpdate({
         closingMeter: val,
         litresSold: litres,
+        amountGhs: amount,
         warning,
-        isConfirmed: true, // manager manually typed or edited
+        isConfirmed: true,
         ocrStatus: reading.ocrStatus === 'candidate' ? 'confirmed' : reading.ocrStatus,
       });
     }
@@ -104,13 +118,14 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
       onUpdate({
         openingMeter: null,
         litresSold: null,
+        amountGhs: null,
         warning: 'Missing opening meter',
       });
       return;
     }
     const val = parseFloat(valStr);
     if (!isNaN(val)) {
-      const { litres, warning } = computeSales(
+      const { litres, amount, warning } = computeSales(
         val,
         reading.closingMeter,
         reading.isRollover,
@@ -119,13 +134,14 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
       onUpdate({
         openingMeter: val,
         litresSold: litres,
+        amountGhs: amount,
         warning,
       });
     }
   };
 
   const handleToggleRollover = (enabled: boolean) => {
-    const { litres, warning } = computeSales(
+    const { litres, amount, warning } = computeSales(
       reading.openingMeter,
       reading.closingMeter,
       enabled,
@@ -134,56 +150,14 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
     onUpdate({
       isRollover: enabled,
       litresSold: litres,
+      amountGhs: amount,
       warning,
     });
   };
 
-  // Fallback single file upload
-  const handleSinglePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      setIsProcessingOcr(true);
-      setOcrProgress(15);
-
-      const { originalThumbnail, processedDataUrl } = await preprocessMeterImage(file);
-      setOcrProgress(35);
-
-      onUpdate({
-        photoDataUrl: originalThumbnail,
-        ocrStatus: 'processing',
-      });
-
-      const ocrResult = await recognizeMeterImage(
-        processedDataUrl,
-        reading.openingMeter,
-        (progress) => setOcrProgress(progress)
-      );
-
-      if (ocrResult.candidate !== null) {
-        onUpdate({
-          candidateOcrReading: ocrResult.candidate,
-          ocrConfidence: ocrResult.confidence,
-          ocrStatus: 'candidate',
-        });
-      } else {
-        onUpdate({
-          ocrStatus: 'failed',
-          ocrError: 'Could not clearly recognize digits',
-        });
-      }
-    } catch (err) {
-      console.error('File OCR error:', err);
-      onUpdate({ ocrStatus: 'failed' });
-    } finally {
-      setIsProcessingOcr(false);
-    }
-  };
-
   const handleAcceptOcr = () => {
     if (reading.candidateOcrReading !== null && reading.candidateOcrReading !== undefined) {
-      const { litres, warning } = computeSales(
+      const { litres, amount, warning } = computeSales(
         reading.openingMeter,
         reading.candidateOcrReading,
         reading.isRollover,
@@ -192,15 +166,12 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
       onUpdate({
         closingMeter: reading.candidateOcrReading,
         litresSold: litres,
+        amountGhs: amount,
         warning,
         ocrStatus: 'confirmed',
         isConfirmed: true,
       });
     }
-  };
-
-  const handleToggleConfirmed = () => {
-    onUpdate({ isConfirmed: !reading.isConfirmed });
   };
 
   const hasNegativeMovement =
@@ -212,20 +183,22 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
   return (
     <div
       className={`rounded-2xl border transition-all ${
-        hasNegativeMovement
+        reading.isIdleOrOptional
+          ? 'bg-slate-950/40 border-slate-800/60 opacity-60'
+          : hasNegativeMovement
           ? 'bg-rose-950/20 border-rose-500/50 shadow-md shadow-rose-950/20'
           : reading.isConfirmed && reading.closingMeter !== null
-          ? 'bg-slate-900/90 border-slate-700/80 shadow-sm'
+          ? 'bg-slate-900/95 border-slate-700/80 shadow-sm'
           : 'bg-slate-900/60 border-slate-800'
       }`}
     >
       {/* Card Header */}
       <div className="px-4 py-3 border-b border-slate-800/80 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <span className="w-5 h-5 rounded-full bg-slate-800 text-slate-400 font-mono text-[11px] font-bold flex items-center justify-center">
+          <span className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 font-mono text-[11px] font-bold flex items-center justify-center">
             {positionNumber}
           </span>
-          <span className="font-bold text-white text-base tracking-tight">
+          <span className="font-extrabold text-white text-base tracking-tight">
             {reading.pumpLabelSnapshot}
           </span>
           <span
@@ -235,26 +208,30 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
           >
             {reading.productCodeSnapshot}
           </span>
+          <span className="text-[11px] text-amber-400 font-mono">
+            @ ¢{unitPrice.toFixed(2)}
+          </span>
         </div>
 
         <div className="flex items-center gap-1.5">
+          {/* Confirmed / Verified Badge */}
           {reading.closingMeter !== null && (
             <button
               type="button"
-              onClick={handleToggleConfirmed}
+              onClick={() => onUpdate({ isConfirmed: !reading.isConfirmed })}
               className={`px-2 py-0.5 rounded-full text-[11px] font-bold flex items-center gap-1 transition-colors ${
                 reading.isConfirmed
                   ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                   : 'bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500/30'
               }`}
-              title="Click to toggle manager confirmation"
+              title="Toggle manager verification"
             >
               <Check className="w-3 h-3" />
               <span>{reading.isConfirmed ? 'Verified' : 'Unconfirmed'}</span>
             </button>
           )}
 
-          {/* In-App Camera Button */}
+          {/* Camera Button */}
           {onOpenCamera && (
             <button
               type="button"
@@ -265,13 +242,25 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
               <Camera className="w-4 h-4" />
             </button>
           )}
+
+          {/* Remove / Delete Pump Button (Removable pump requirement) */}
+          {onRemovePump && (
+            <button
+              type="button"
+              onClick={() => onRemovePump(reading.id)}
+              className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+              title="Remove this pump from report"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Main Body Grid */}
+      {/* Main Card Body */}
       <div className="p-4 space-y-3.5">
-        {/* Warning Banner if suspicious or missing */}
-        {reading.warning && (
+        {/* Warning Banner */}
+        {reading.warning && !reading.isIdleOrOptional && (
           <div className="p-2.5 rounded-xl bg-amber-950/40 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
             <div className="flex-1 leading-relaxed">
@@ -282,19 +271,19 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
                   onClick={() => handleToggleRollover(true)}
                   className="block mt-1 font-bold text-amber-200 underline hover:text-white"
                 >
-                  Enable meter rollover calculation (99,999 → 0)
+                  Enable rollover calculation
                 </button>
               )}
             </div>
           </div>
         )}
 
-        {/* Meter Inputs */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {/* Input Fields */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
           {/* Opening Meter */}
           <div>
             <label className="block text-[11px] font-semibold text-slate-400 mb-1">
-              Opening Meter (L)
+              Opening (L)
             </label>
             <input
               type="number"
@@ -302,23 +291,18 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
               value={reading.openingMeter !== null ? reading.openingMeter : ''}
               onChange={(e) => handleOpeningChange(e.target.value)}
               placeholder="0.00"
-              className={`w-full px-3 py-2 text-sm font-mono-numbers rounded-xl border focus:outline-none transition-colors ${
+              className={`w-full px-2.5 py-1.5 text-xs font-mono-numbers rounded-xl border focus:outline-none transition-colors ${
                 reading.openingMeter === null
-                  ? 'bg-amber-950/20 border-amber-500/50 text-amber-300 placeholder-amber-400/50'
+                  ? 'bg-amber-950/20 border-amber-500/50 text-amber-300'
                   : 'bg-slate-950 border-slate-700 text-slate-200 focus:border-amber-500'
               }`}
             />
-            {reading.openingMeter === null && (
-              <span className="text-[10px] text-amber-400 font-medium block mt-1">
-                Missing previous close
-              </span>
-            )}
           </div>
 
           {/* Closing Meter */}
           <div>
             <label className="block text-[11px] font-semibold text-slate-400 mb-1">
-              Closing Meter (L)
+              Closing (L)
             </label>
             <input
               type="number"
@@ -326,17 +310,17 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
               value={reading.closingMeter !== null ? reading.closingMeter : ''}
               onChange={(e) => handleClosingChange(e.target.value)}
               placeholder="0.00"
-              className="w-full px-3 py-2 text-sm font-mono-numbers rounded-xl bg-slate-950 border border-slate-700 text-white focus:border-amber-500 focus:outline-none font-bold"
+              className="w-full px-2.5 py-1.5 text-xs font-mono-numbers rounded-xl bg-slate-950 border border-slate-700 text-white focus:border-amber-500 focus:outline-none font-bold"
             />
           </div>
 
           {/* Litres Sold */}
-          <div className="col-span-2 sm:col-span-1 bg-slate-950/70 rounded-xl p-2.5 border border-slate-800 flex flex-col justify-center">
+          <div className="bg-slate-950/80 rounded-xl p-2 border border-slate-800 flex flex-col justify-center">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
               Litres Sold
             </span>
             <span
-              className={`text-base font-mono-numbers font-black ${
+              className={`text-sm font-mono-numbers font-black ${
                 reading.litresSold !== null ? 'text-amber-400' : 'text-slate-500'
               }`}
             >
@@ -345,9 +329,43 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
                 : '— L'}
             </span>
           </div>
+
+          {/* Total Sales (¢) */}
+          <div className="bg-slate-950/80 rounded-xl p-2 border border-slate-800 flex flex-col justify-center">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+              Sales Amount (¢)
+            </span>
+            <span
+              className={`text-sm font-mono-numbers font-black ${
+                reading.amountGhs !== null ? 'text-emerald-400' : 'text-slate-500'
+              }`}
+            >
+              {reading.amountGhs !== null && reading.amountGhs !== undefined
+                ? `¢ ${reading.amountGhs.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                : '—'}
+            </span>
+          </div>
         </div>
 
-        {/* OCR Candidate Suggestion Banner (if present and not yet applied) */}
+        {/* Analogue / Mechanical Totalizer Reading Field */}
+        <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-1.5 text-slate-400">
+            <Gauge className="w-3.5 h-3.5 text-sky-400" />
+            <span className="font-semibold text-slate-300">Analogue Reading:</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs text-slate-400 font-bold">{reading.pumpLabelSnapshot}-</span>
+            <input
+              type="text"
+              placeholder="e.g. 483179"
+              value={reading.analogueMeter || ''}
+              onChange={(e) => onUpdate({ analogueMeter: e.target.value.trim() || null })}
+              className="w-28 px-2 py-1 bg-slate-900 border border-slate-700 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-sky-400"
+            />
+          </div>
+        </div>
+
+        {/* OCR Candidate Suggestion Banner */}
         {reading.candidateOcrReading !== null &&
           reading.closingMeter !== reading.candidateOcrReading && (
             <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2">
@@ -356,7 +374,7 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
                 <div>
                   <span className="text-[10px] text-slate-400 block">OCR Detected Suggestion:</span>
                   <span className="font-mono text-sm font-bold text-amber-300">
-                    {reading.candidateOcrReading.toLocaleString(undefined, { minimumFractionDigits: 1 })}
+                    {reading.candidateOcrReading.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
               </div>
@@ -370,7 +388,7 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
             </div>
           )}
 
-        {/* Attached Photo Thumbnail & Options */}
+        {/* Attached Photo Thumbnail */}
         {reading.photoDataUrl && (
           <div className="flex items-center justify-between p-2 rounded-xl bg-slate-950/50 border border-slate-800">
             <div className="flex items-center gap-2.5">
@@ -380,28 +398,21 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
                 className="w-10 h-10 rounded-lg object-cover border border-slate-700 cursor-pointer"
                 onClick={() => onPreviewPhoto?.(reading.photoDataUrl!, `${reading.pumpLabelSnapshot} Meter Photo`)}
               />
-              <div>
-                <span className="text-xs font-semibold text-slate-300 block">
-                  Meter Photo Attached
-                </span>
-                <span className="text-[10px] text-emerald-400">Ready for report archive</span>
-              </div>
+              <span className="text-xs font-semibold text-slate-300">Meter Photo Attached</span>
             </div>
 
             <div className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => onPreviewPhoto?.(reading.photoDataUrl!, `${reading.pumpLabelSnapshot} Meter Photo`)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
-                title="View full photo"
+                className="p-1 text-slate-400 hover:text-white"
               >
                 <Eye className="w-4 h-4" />
               </button>
               <button
                 type="button"
                 onClick={() => onUpdate({ photoDataUrl: undefined, candidateOcrReading: null })}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800"
-                title="Remove photo"
+                className="p-1 text-slate-400 hover:text-rose-400"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -409,53 +420,49 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
           </div>
         )}
 
-        {/* Advanced Rollover & Notes Accordion */}
-        <div>
+        {/* Quick Options / Advanced accordion */}
+        <div className="flex items-center justify-between text-[11px] pt-1">
+          <label className="flex items-center gap-1.5 text-slate-400 cursor-pointer hover:text-slate-200">
+            <input
+              type="checkbox"
+              checked={Boolean(reading.isIdleOrOptional)}
+              onChange={(e) => onUpdate({ isIdleOrOptional: e.target.checked })}
+              className="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-0"
+            />
+            <span>Mark Idle / Not used today</span>
+          </label>
+
           <button
             type="button"
             onClick={() => setShowAdvanced(!showAdvanced)}
-            className="text-[11px] font-semibold text-slate-400 hover:text-slate-200 flex items-center gap-1"
+            className="text-slate-400 hover:text-slate-200 flex items-center gap-1"
           >
             {showAdvanced ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            <span>Rollover settings & notes</span>
+            <span>Rollover / Notes</span>
           </button>
-
-          {showAdvanced && (
-            <div className="pt-2 space-y-2 border-t border-slate-800 mt-2">
-              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={reading.isRollover}
-                  onChange={(e) => handleToggleRollover(e.target.checked)}
-                  className="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-0"
-                />
-                <span>Totalizer Rollover / Reset occurred today</span>
-              </label>
-
-              {reading.isRollover && (
-                <div className="pl-6">
-                  <label className="block text-[10px] text-slate-400">Rollover Capacity</label>
-                  <input
-                    type="number"
-                    value={reading.rolloverCapacity || 100000}
-                    onChange={(e) =>
-                      onUpdate({ rolloverCapacity: parseFloat(e.target.value) || 100000 })
-                    }
-                    className="w-32 px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs text-white"
-                  />
-                </div>
-              )}
-
-              <input
-                type="text"
-                placeholder="Optional nozzle note (e.g. nozzle test calibration 20L)"
-                value={reading.notes || ''}
-                onChange={(e) => onUpdate({ notes: e.target.value })}
-                className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-300 placeholder-slate-600 focus:outline-none"
-              />
-            </div>
-          )}
         </div>
+
+        {showAdvanced && (
+          <div className="pt-2 space-y-2 border-t border-slate-800 text-xs">
+            <label className="flex items-center gap-2 text-slate-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={reading.isRollover}
+                onChange={(e) => handleToggleRollover(e.target.checked)}
+                className="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-0"
+              />
+              <span>Meter Rollover occurred today</span>
+            </label>
+
+            <input
+              type="text"
+              placeholder="Nozzle note (e.g. pump test / calibration 20L)"
+              value={reading.notes || ''}
+              onChange={(e) => onUpdate({ notes: e.target.value })}
+              className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-300 placeholder-slate-600 focus:outline-none"
+            />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 /**
  * OMC Manager Day Sales & Stock Reporting App
- * Version 3.1 • Onyxma Energy
+ * Version 3.2 • Oborpah Asesewa Station Edition
  * Mobile-first multi-user web app • React + TypeScript • Supabase & Vercel ready
  */
 
@@ -15,6 +15,7 @@ import {
   StationWorkspace,
   ConfiguredProduct,
   ConfiguredPump,
+  HubtelDetails,
 } from './types/report';
 import {
   getActiveUser,
@@ -24,6 +25,8 @@ import {
   getReportByDate,
   saveDailyReport,
   seedDemoWorkspacesIfEmpty,
+  deletePump,
+  updateProductPrice,
 } from './services/dataService';
 import { recalculateReport } from './utils/calculations';
 import { ReportHeader } from './features/reports/ReportHeader';
@@ -37,7 +40,7 @@ import { BulkUploadModal } from './features/meters/BulkUploadModal';
 import { SendReportModal } from './features/sharing/SendReportModal';
 import { ReportHistoryModal } from './features/reports/ReportHistoryModal';
 import { PhotoPreviewModal } from './features/meters/PhotoPreviewModal';
-import { Fuel, Layers, Receipt, Sliders, Send, Camera, ShieldCheck, ChevronRight } from 'lucide-react';
+import { Fuel, Layers, Receipt, Sliders, Send, Camera, ShieldCheck, ChevronRight, Moon, Sun, Clock } from 'lucide-react';
 
 export default function App() {
   // Current user & isolated workspace state
@@ -46,9 +49,9 @@ export default function App() {
   const [products, setProducts] = useState<ConfiguredProduct[]>([]);
   const [pumps, setPumps] = useState<ConfiguredPump[]>([]);
 
-  // Selected date (defaults to today's date in local time YYYY-MM-DD)
+  // Selected date (defaults to today's date: 2026-10-14)
   const [selectedDate, setSelectedDate] = useState<string>(() => {
-    return '2026-10-12';
+    return '2026-10-14';
   });
 
   const [report, setReport] = useState<DailyReport | null>(null);
@@ -63,8 +66,11 @@ export default function App() {
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [isSendModalOpen, setIsSendModalOpen] = useState(false);
 
-  // In-app camera state for a specific pump reading
+  // In-app camera state for pump meter
   const [activeCameraPump, setActiveCameraPump] = useState<ReportPumpReading | null>(null);
+
+  // In-app camera state for dipstick / tank dipping
+  const [activeCameraDippingStock, setActiveCameraDippingStock] = useState<ReportStockEntry | null>(null);
 
   // Photo preview modal state
   const [previewPhoto, setPreviewPhoto] = useState<{ isOpen: boolean; url: string; title: string }>({
@@ -126,6 +132,70 @@ export default function App() {
     });
   };
 
+  // Remove / Delete a pump (User requirement: "available default pumps, some should be removable")
+  const handleRemovePump = (readingId: string) => {
+    if (!report) return;
+    const target = report.pumps.find((p) => p.id === readingId);
+    if (!target) return;
+
+    if (window.confirm(`Are you sure you want to remove pump "${target.pumpLabelSnapshot}" from this report?`)) {
+      setReport((prev) => {
+        if (!prev) return null;
+        const filteredPumps = prev.pumps.filter((p) => p.id !== readingId);
+        const nextReport: DailyReport = {
+          ...prev,
+          pumps: filteredPumps,
+        };
+        const recalculated = recalculateReport(nextReport, products);
+        persistReport(recalculated);
+        return recalculated;
+      });
+
+      // Also remove from workspace configuration so it doesn't reappear
+      if (target.pumpId) {
+        deletePump(currentUser.id, target.pumpId);
+        setPumps(getWorkspacePumps(currentUser.id));
+      }
+    }
+  };
+
+  // Update product unit price
+  const handleUpdateUnitPrice = (productCode: string, newPrice: number) => {
+    if (!report) return;
+
+    updateProductPrice(currentUser.id, productCode, newPrice);
+    setProducts(getWorkspaceProducts(currentUser.id));
+
+    setReport((prev) => {
+      if (!prev) return null;
+      const newPrices = {
+        ...(prev.productPrices || {}),
+        [productCode]: newPrice,
+      };
+      const nextReport: DailyReport = {
+        ...prev,
+        productPrices: newPrices,
+      };
+      const recalculated = recalculateReport(nextReport, products);
+      persistReport(recalculated);
+      return recalculated;
+    });
+  };
+
+  // Update shift type
+  const handleUpdateShiftType = (shiftType: string) => {
+    if (!report) return;
+    setReport((prev) => {
+      if (!prev) return null;
+      const nextReport: DailyReport = {
+        ...prev,
+        shiftType,
+      };
+      persistReport(nextReport);
+      return nextReport;
+    });
+  };
+
   // Update a stock entry
   const handleUpdateStock = (stockId: string, updated: Partial<ReportStockEntry>) => {
     if (!report) return;
@@ -140,6 +210,25 @@ export default function App() {
       const recalculated = recalculateReport(nextReport, products);
       persistReport(recalculated);
       return recalculated;
+    });
+  };
+
+  // Update Hubtel details
+  const handleUpdateHubtel = (updated: Partial<HubtelDetails>) => {
+    if (!report) return;
+
+    setReport((prev) => {
+      if (!prev) return null;
+      const nextHubtel = {
+        ...(prev.hubtel || { hubtelAccount: '', dashboardAmount: null, bankingWithHubtel: null }),
+        ...updated,
+      };
+      const nextReport: DailyReport = {
+        ...prev,
+        hubtel: nextHubtel,
+      };
+      persistReport(nextReport);
+      return nextReport;
     });
   };
 
@@ -182,7 +271,7 @@ export default function App() {
     });
   };
 
-  // Accept photo captured via In-App Camera modal
+  // Accept photo captured via In-App Camera modal for pump meter
   const handleAcceptCameraPhoto = (
     photoDataUrl: string,
     candidateReading?: number | null,
@@ -200,6 +289,26 @@ export default function App() {
 
     handleUpdatePump(pumpReadingId, partial);
     setActiveCameraPump(null);
+  };
+
+  // Accept photo captured via Dipping Camera modal
+  const handleAcceptDippingPhoto = (
+    photoDataUrl: string,
+    candidateReading?: number | null
+  ) => {
+    if (!activeCameraDippingStock || !report) return;
+
+    const stockId = activeCameraDippingStock.id;
+    const partial: Partial<ReportStockEntry> = {
+      photoDataUrl,
+    };
+
+    if (candidateReading !== null && candidateReading !== undefined && candidateReading > 0) {
+      partial.physicalClosingStock = candidateReading;
+    }
+
+    handleUpdateStock(stockId, partial);
+    setActiveCameraDippingStock(null);
   };
 
   // Update report status (e.g. sent via WhatsApp)
@@ -254,7 +363,42 @@ export default function App() {
       />
 
       {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-5 pb-24 sm:pb-8">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4 pb-24 sm:pb-8">
+        {/* Shift Type & Quick Config Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/70 p-3 rounded-2xl border border-slate-800 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400 font-semibold">Report Shift:</span>
+            <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
+              {(['Evening Report', 'Morning Report', 'Full Day'] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => handleUpdateShiftType(s)}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                    report.shiftType === s
+                      ? 'bg-amber-500 text-slate-950 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4 text-xs font-mono">
+            <span className="text-slate-400">
+              PMS UP: <strong className="text-amber-400">¢{report.productPrices?.PMS?.toFixed(2) || '16.59'}</strong>
+            </span>
+            <span className="text-slate-400">
+              AGO UP: <strong className="text-amber-400">¢{report.productPrices?.AGO?.toFixed(2) || '18.39'}</strong>
+            </span>
+            <span className="text-slate-400">
+              Cash in Till: <strong className="text-emerald-400">¢{Math.round(report.cashToBankOrTill || 0).toLocaleString()}</strong>
+            </span>
+          </div>
+        </div>
+
         {/* Navigation Tabs (Mobile-first stacked & pill style) */}
         <div className="flex items-center gap-1.5 p-1 bg-slate-900/90 border border-slate-800 rounded-2xl overflow-x-auto no-scrollbar shadow-inner">
           <button
@@ -268,7 +412,7 @@ export default function App() {
             }`}
           >
             <Fuel className="w-4 h-4" />
-            <span>Meters & Sales</span>
+            <span>Pumps & Meter Readings</span>
           </button>
 
           <button
@@ -282,7 +426,7 @@ export default function App() {
             }`}
           >
             <Layers className="w-4 h-4" />
-            <span>Stock Dipping</span>
+            <span>Stock Dipping & Cash Account</span>
           </button>
 
           <button
@@ -296,7 +440,7 @@ export default function App() {
             }`}
           >
             <Receipt className="w-4 h-4" />
-            <span>Expenses</span>
+            <span>Station Expenses</span>
           </button>
 
           <button
@@ -320,18 +464,25 @@ export default function App() {
             report={report}
             products={products}
             onUpdatePump={handleUpdatePump}
+            onRemovePump={handleRemovePump}
+            onUpdateUnitPrice={handleUpdateUnitPrice}
             onOpenCamera={(reading) => setActiveCameraPump(reading)}
+            onOpenPumpSetup={() => setActiveTab('setup')}
             onOpenBulkUpload={() => setIsBulkModalOpen(true)}
             onPreviewPhoto={handlePreviewPhoto}
           />
         )}
 
-        {/* Tab 2: Tank Stock & Dipping */}
+        {/* Tab 2: Tank Stock Dipping, Dipping Camera & Cash Account */}
         {activeTab === 'stock' && (
           <StockReconciliationSection
             report={report}
             products={products}
             onUpdateStock={handleUpdateStock}
+            onUpdateUnitPrice={handleUpdateUnitPrice}
+            onUpdateHubtel={handleUpdateHubtel}
+            onOpenCameraForDipping={(stock) => setActiveCameraDippingStock(stock)}
+            onPreviewPhoto={handlePreviewPhoto}
           />
         )}
 
@@ -375,7 +526,7 @@ export default function App() {
         </button>
       </aside>
 
-      {/* In-App Camera Capture Modal */}
+      {/* In-App Camera Modal for Pump Meters */}
       {activeCameraPump && (
         <InAppCameraModal
           isOpen={Boolean(activeCameraPump)}
@@ -384,6 +535,20 @@ export default function App() {
           productCode={activeCameraPump.productCodeSnapshot}
           expectedOpeningValue={activeCameraPump.openingMeter}
           onAcceptPhoto={handleAcceptCameraPhoto}
+        />
+      )}
+
+      {/* In-App Camera Modal for Tank Dipping */}
+      {activeCameraDippingStock && (
+        <InAppCameraModal
+          isOpen={Boolean(activeCameraDippingStock)}
+          onClose={() => setActiveCameraDippingStock(null)}
+          pumpLabel={`${activeCameraDippingStock.productCodeSnapshot} Tank Dipstick`}
+          productCode={activeCameraDippingStock.productCodeSnapshot}
+          expectedOpeningValue={activeCameraDippingStock.openingStock}
+          onAcceptPhoto={(photoUrl, candidateReading) =>
+            handleAcceptDippingPhoto(photoUrl, candidateReading)
+          }
         />
       )}
 
@@ -405,7 +570,7 @@ export default function App() {
         onPreviewPhoto={handlePreviewPhoto}
       />
 
-      {/* Review & Share Modal */}
+      {/* Review & Share Modal with Oborpah Asesewa Format */}
       <SendReportModal
         isOpen={isSendModalOpen}
         onClose={() => setIsSendModalOpen(false)}

@@ -1,5 +1,5 @@
 /**
- * OMC Data Service • Version 3.1
+ * OMC Data Service • Version 3.2
  * Unified persistence layer supporting private-by-default multi-user workspaces.
  * Interacts with Supabase (PostgreSQL + RLS + Auth) when configured,
  * with strict isolated client-side per-user workspaces as local/offline fallback.
@@ -25,15 +25,15 @@ const AUTH_USER_STORAGE_KEY = 'omc_active_user';
 // Demo initial users available for immediate multi-user isolation verification
 const DEMO_USERS: UserProfile[] = [
   {
-    id: 'user_kwame_01',
-    email: 'kwame.ansah@onyxmaenergy.com',
-    fullName: 'Kwame Ansah (Manager A)',
+    id: 'user_station_manager_01',
+    email: 'manager.asesewa@station.com',
+    fullName: 'Station Manager (Oborpah Asesewa)',
     role: 'Station Manager',
   },
   {
     id: 'user_abena_02',
     email: 'abena.boateng@onyxmaenergy.com',
-    fullName: 'Abena Boateng (Manager B)',
+    fullName: 'Abena Boateng (Tema Station)',
     role: 'Station Manager',
   },
 ];
@@ -48,7 +48,6 @@ export function getActiveUser(): UserProfile {
   } catch (e) {
     console.warn('Failed to parse active user:', e);
   }
-  // Default to Manager A initially
   const defaultUser = DEMO_USERS[0];
   setActiveUser(defaultUser);
   return defaultUser;
@@ -94,28 +93,28 @@ export function getOrCreateWorkspace(userId: string): StationWorkspace {
     }
   }
 
-  // Determine station name based on user
-  const stationName = userId === 'user_kwame_01'
-    ? 'Onyxma Energy - Airport Bypass Station'
+  // Station name configured for Oborpah Asesewa
+  const stationName = userId === 'user_station_manager_01'
+    ? 'OBORPAH ASESEWA'
     : userId === 'user_abena_02'
-    ? 'Onyxma Energy - Tema Industrial Highway'
-    : 'Onyxma Energy - Service Station';
+    ? 'TEMA INDUSTRIAL HIGHWAY'
+    : 'OBORPAH ASESEWA';
 
   const initialWorkspace: StationWorkspace = {
     id: `ws_${userId}`,
     ownerUserId: userId,
     stationName,
-    stationLocation: 'Greater Accra, Ghana',
+    stationLocation: 'Asesewa, Eastern Region, Ghana',
     omcBrand: 'Onyxma Energy',
     managerName: getActiveUser().fullName,
-    currencySymbol: 'GHS',
+    currencySymbol: '¢',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
 
   localStorage.setItem(key, JSON.stringify(initialWorkspace));
 
-  // Initialize initial products and pumps for this brand new workspace
+  // Initialize initial products and pumps for this workspace
   initializeWorkspaceProductsAndPumps(initialWorkspace.id, userId);
 
   return initialWorkspace;
@@ -140,17 +139,17 @@ export function initializeWorkspaceProductsAndPumps(workspaceId: string, userId:
   const prodKey = userKey(userId, 'products');
   const pumpKey = userKey(userId, 'pumps');
 
-  // Products
-  const products: ConfiguredProduct[] = DEFAULT_INITIAL_PRODUCTS.map((p, idx) => ({
+  // Products with default prices (PMS: 16.59, AGO: 18.39)
+  const products: ConfiguredProduct[] = DEFAULT_INITIAL_PRODUCTS.map((p) => ({
     ...p,
     id: `prod_${userId}_${p.code.toLowerCase()}`,
     workspaceId,
   }));
   localStorage.setItem(prodKey, JSON.stringify(products));
 
-  // Pumps (Default PMS1-4, AGO1-6, KERO1-2)
+  // Pumps: S1-S4 (PMS) & D1-D4 (AGO)
   const productMap = new Map(products.map((p) => [p.code, p.id]));
-  const pumps: ConfiguredPump[] = DEFAULT_INITIAL_PUMPS_TEMPLATE.map((pt, idx) => ({
+  const pumps: ConfiguredPump[] = DEFAULT_INITIAL_PUMPS_TEMPLATE.map((pt) => ({
     id: `pump_${userId}_${pt.label.toLowerCase()}`,
     workspaceId,
     productId: productMap.get(pt.productCode) || products[0].id,
@@ -173,10 +172,20 @@ export function getWorkspaceProducts(userId: string): ConfiguredProduct[] {
       console.warn('Failed to parse products:', e);
     }
   }
-  // If missing, initialize
   const ws = getOrCreateWorkspace(userId);
   initializeWorkspaceProductsAndPumps(ws.id, userId);
   return JSON.parse(localStorage.getItem(key)!);
+}
+
+export function saveWorkspaceProducts(userId: string, products: ConfiguredProduct[]) {
+  localStorage.setItem(userKey(userId, 'products'), JSON.stringify(products));
+}
+
+export function updateProductPrice(userId: string, productCode: string, unitPrice: number): ConfiguredProduct[] {
+  const products = getWorkspaceProducts(userId);
+  const updated = products.map((p) => (p.code === productCode ? { ...p, unitPrice } : p));
+  saveWorkspaceProducts(userId, updated);
+  return updated;
 }
 
 export function getWorkspacePumps(userId: string): ConfiguredPump[] {
@@ -237,48 +246,27 @@ export function updatePump(
   return updated;
 }
 
-export function togglePumpActive(userId: string, pumpId: string, isActive: boolean): ConfiguredPump[] {
-  // PRD Rule 7 & 21: Deactivation preserves history; do not delete
-  return updatePump(userId, pumpId, { isActive });
+export function deletePump(userId: string, pumpId: string): ConfiguredPump[] {
+  const pumps = getWorkspacePumps(userId);
+  const filtered = pumps.filter((p) => p.id !== pumpId);
+  saveWorkspacePumps(userId, filtered);
+  return filtered;
 }
 
-export function reorderPumps(userId: string, orderedIds: string[]): ConfiguredPump[] {
-  const pumps = getWorkspacePumps(userId);
-  const pumpMap = new Map(pumps.map((p) => [p.id, p]));
-  const reordered: ConfiguredPump[] = [];
-
-  orderedIds.forEach((id, index) => {
-    const p = pumpMap.get(id);
-    if (p) {
-      reordered.push({ ...p, displayOrder: index + 1 });
-      pumpMap.delete(id);
-    }
-  });
-
-  // Append any remainder
-  pumpMap.forEach((p) => {
-    reordered.push({ ...p, displayOrder: reordered.length + 1 });
-  });
-
-  saveWorkspacePumps(userId, reordered);
-  return reordered;
+export function togglePumpActive(userId: string, pumpId: string, isActive: boolean): ConfiguredPump[] {
+  return updatePump(userId, pumpId, { isActive });
 }
 
 // ----------------------------------------------------------------------
 // REPORT CREATION, CARRY FORWARD & PERSISTENCE
 // ----------------------------------------------------------------------
 
-/**
- * Searches past reports strictly in this user's private workspace
- * to find the most recent valid confirmed closing meter reading for a given pump.
- */
 export function findMostRecentClosingReading(
   userId: string,
   pumpId: string,
   beforeDate: string
 ): number | null {
   const reports = listAllUserReports(userId);
-  // Sort descending by date
   const pastReports = reports
     .filter((r) => r.reportDate < beforeDate)
     .sort((a, b) => b.reportDate.localeCompare(a.reportDate));
@@ -293,10 +281,6 @@ export function findMostRecentClosingReading(
   return null;
 }
 
-/**
- * Creates a new blank report for date, carrying forward previous closing readings
- * for matching pumps. New pumps with no history get openingMeter: null.
- */
 export function createNewDailyReport(userId: string, reportDate: string): DailyReport {
   const ws = getOrCreateWorkspace(userId);
   const products = getWorkspaceProducts(userId).filter((p) => p.isActive);
@@ -310,9 +294,15 @@ export function createNewDailyReport(userId: string, reportDate: string): DailyR
     return a.displayOrder - b.displayOrder;
   });
 
+  const priceMap: Record<string, number> = {};
+  products.forEach((p) => {
+    priceMap[p.code] = p.unitPrice || (p.code === 'PMS' ? 16.59 : p.code === 'AGO' ? 18.39 : 15.00);
+  });
+
   // Build pump readings with carry-forward
   const pumpReadings: ReportPumpReading[] = sortedPumps.map((pump) => {
     const previousClosing = findMostRecentClosingReading(userId, pump.id, reportDate);
+    const unitPrice = priceMap[pump.productCode] || 16.59;
 
     return {
       id: `reading_${Date.now()}_${pump.id}`,
@@ -320,22 +310,25 @@ export function createNewDailyReport(userId: string, reportDate: string): DailyR
       pumpLabelSnapshot: pump.label,
       productCodeSnapshot: pump.productCode,
       productIdSnapshot: pump.productId,
-      openingMeter: previousClosing, // null if no prior reading!
+      openingMeter: previousClosing,
       closingMeter: null,
       litresSold: null,
+      unitPriceSnapshot: unitPrice,
+      amountGhs: null,
+      analogueMeter: null,
       candidateOcrReading: null,
       ocrStatus: 'idle',
       isConfirmed: false,
       isRollover: false,
       rolloverCapacity: pump.defaultCapacity || 100000,
       notes: '',
-      warning: previousClosing === null ? 'Missing opening meter — please input initial reading' : null,
+      isIdleOrOptional: false,
+      warning: null,
     };
   });
 
-  // Build initial stock entries for each active product
+  // Build initial stock entries
   const stockEntries: ReportStockEntry[] = products.map((prod) => {
-    // Attempt carry-forward of yesterday's physical closing stock as today's opening stock
     let prevStockOpening: number | null = null;
     const pastReports = listAllUserReports(userId)
       .filter((r) => r.reportDate < reportDate)
@@ -348,19 +341,23 @@ export function createNewDailyReport(userId: string, reportDate: string): DailyR
       }
     }
 
+    const unitPrice = priceMap[prod.code] || 16.59;
+
     return {
       id: `stock_${Date.now()}_${prod.code}`,
       productId: prod.id,
       productCodeSnapshot: prod.code,
       productNameSnapshot: prod.fullName,
       tankLabel: 'Main Tank',
-      openingStock: prevStockOpening,
+      openingStock: prevStockOpening ?? (prod.code === 'PMS' ? 12710 : prod.code === 'AGO' ? 18840 : 5000),
       receipts: 0,
       daySales: 0,
       physicalClosingStock: null,
       theoreticalClosingStock: null,
       variance: null,
-      warning: prevStockOpening === null ? 'Missing opening stock' : null,
+      unitPriceSnapshot: unitPrice,
+      productSalesGhs: 0,
+      warning: null,
     };
   });
 
@@ -368,13 +365,23 @@ export function createNewDailyReport(userId: string, reportDate: string): DailyR
     id: `rep_${userId}_${reportDate}`,
     workspaceId: ws.id,
     reportDate,
+    shiftType: 'Evening Report',
     stationNameSnapshot: ws.stationName,
     status: 'Draft',
+    productPrices: priceMap,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     pumps: pumpReadings,
     stocks: stockEntries,
     expenses: [],
+    hubtel: {
+      hubtelAccount: '',
+      dashboardAmount: null,
+      bankingWithHubtel: null,
+    },
+    totalSalesGhs: 0,
+    totalExpensesGhs: 0,
+    cashToBankOrTill: 0,
     warnings: [],
     saveStatus: 'saved',
     lastSavedAt: new Date().toLocaleTimeString(),
@@ -389,13 +396,19 @@ export function getReportByDate(userId: string, reportDate: string): DailyReport
   if (stored) {
     try {
       const parsed: DailyReport = JSON.parse(stored);
+      // Ensure product prices and hubtel exist
+      if (!parsed.productPrices) {
+        parsed.productPrices = { PMS: 16.59, AGO: 18.39, KERO: 15.00 };
+      }
+      if (!parsed.hubtel) {
+        parsed.hubtel = { hubtelAccount: '', dashboardAmount: null, bankingWithHubtel: null };
+      }
       return parsed;
     } catch (e) {
       console.warn('Failed to parse report:', e);
     }
   }
 
-  // If not found, create new and save
   const newReport = createNewDailyReport(userId, reportDate);
   saveDailyReport(userId, newReport);
   return newReport;
@@ -411,11 +424,8 @@ export function saveDailyReport(userId: string, report: DailyReport): DailyRepor
   };
 
   localStorage.setItem(key, JSON.stringify(updatedReport));
-
-  // Update report index
   updateReportIndex(userId, updatedReport);
 
-  // Attempt Supabase sync asynchronously if client is available
   syncReportToSupabase(updatedReport).catch((err) => {
     console.warn('Background Supabase sync notice:', err);
   });
@@ -433,16 +443,21 @@ function updateReportIndex(userId: string, report: DailyReport) {
     index = [];
   }
 
-  const totalSales = report.pumps.reduce((sum, p) => sum + (p.litresSold || 0), 0);
+  const totalSalesLitres = report.pumps.reduce((sum, p) => sum + (p.litresSold || 0), 0);
+  const totalSalesGhs = report.totalSalesGhs || 0;
   const totalExpenses = report.expenses.reduce((sum, e) => sum + (e.amountGhs || 0), 0);
+  const cashToBank = report.cashToBankOrTill ?? (totalSalesGhs - totalExpenses);
 
   const entry: ReportIndexEntry = {
     id: report.id,
     date: report.reportDate,
     status: report.status,
     stationName: report.stationNameSnapshot,
-    totalSalesLitres: Math.round(totalSales * 100) / 100,
+    shiftType: report.shiftType,
+    totalSalesLitres: Math.round(totalSalesLitres * 100) / 100,
+    totalSalesGhs: Math.round(totalSalesGhs * 100) / 100,
     totalExpensesGhs: Math.round(totalExpenses * 100) / 100,
+    cashToBankOrTill: Math.round(cashToBank * 100) / 100,
     updatedAt: report.updatedAt,
     sentAt: report.sentAt,
   };
@@ -454,7 +469,6 @@ function updateReportIndex(userId: string, report: DailyReport) {
     index.push(entry);
   }
 
-  // Sort descending by date
   index.sort((a, b) => b.date.localeCompare(a.date));
   localStorage.setItem(indexKey, JSON.stringify(index));
 }
@@ -487,139 +501,120 @@ export function listAllUserReports(userId: string): DailyReport[] {
 }
 
 // ----------------------------------------------------------------------
-// SEED REALISTIC INITIAL REPORTS FOR DEMO MANAGERS (SEPARATE WORKSPACES)
+// SEED INITIAL REALISTIC STATION DATA FOR OBORPAH ASESEWA
 // ----------------------------------------------------------------------
 
 export function seedDemoWorkspacesIfEmpty() {
-  const seededKey = 'omc_seeded_v3_1';
+  const seededKey = 'omc_seeded_v3_2_oborpah';
   if (localStorage.getItem(seededKey)) return;
 
-  // 1. Seed Kwame (Manager A)
-  const kwame = DEMO_USERS[0];
-  const kwameWs = getOrCreateWorkspace(kwame.id);
-  const kwamePumps = getWorkspacePumps(kwame.id);
+  const manager = DEMO_USERS[0];
+  const ws = getOrCreateWorkspace(manager.id);
+  const products = getWorkspaceProducts(manager.id);
 
-  // Kwame's Report for 2026-10-11 (yesterday)
-  const kwameRep1 = createNewDailyReport(kwame.id, '2026-10-11');
-  kwameRep1.status = 'Sent';
-  kwameRep1.sentAt = '2026-10-11T20:15:00.000Z';
-  kwameRep1.sentVia = 'WhatsApp';
+  // Initialize Kwame with Oborpah Asesewa station report for 2026-10-14
+  const rep14 = createNewDailyReport(manager.id, '2026-10-14');
+  rep14.shiftType = 'Evening Report';
+  rep14.stationNameSnapshot = 'OBORPAH ASESEWA';
 
-  // Seed realistic baseline closing meters
-  const kwameBaselines: Record<string, { open: number; close: number }> = {
-    PMS1: { open: 41250.0, close: 42110.5 },
-    PMS2: { open: 38920.0, close: 39855.0 },
-    PMS3: { open: 22100.0, close: 22980.0 },
-    PMS4: { open: 19450.0, close: 20215.5 },
-    AGO1: { open: 55400.0, close: 56780.0 },
-    AGO2: { open: 61200.0, close: 62540.0 },
-    AGO3: { open: 48900.0, close: 50120.0 },
-    AGO4: { open: 44300.0, close: 45410.0 },
-    AGO5: { open: 39800.0, close: 40990.0 },
-    AGO6: { open: 32150.0, close: 33200.0 },
-    KERO1: { open: 12400.0, close: 12650.0 },
-    KERO2: { open: 11100.0, close: 11320.0 },
+  // Seed sample readings matching the user's report format:
+  // PMS: S1=25332.02, S2=40470.79, S3=61632.08, S4=58649.49, Litres Sold = 342.49, Sales = 5682, Stock = 12710
+  // AGO: D1=232477.00, D2=427498.60, D3=165704.46, D4=202374.21, Litres Sold = 516.60, Sales = 9500, Stock = 18840
+  // Analogue: S3: 483179, S4: 59439, D1: 232567, D2: 429292
+  const pumpBaselines: Record<string, { open: number; close: number; analogue?: string }> = {
+    S1: { open: 25210.02, close: 25332.02 },
+    S2: { open: 40380.79, close: 40470.79 },
+    S3: { open: 61570.08, close: 61632.08, analogue: '483179' },
+    S4: { open: 58580.49, close: 58649.49, analogue: '59439' },
+    D1: { open: 232350.00, close: 232477.00, analogue: '232567' },
+    D2: { open: 427320.60, close: 427498.60, analogue: '429292' },
+    D3: { open: 165580.46, close: 165704.46 },
+    D4: { open: 202290.21, close: 202374.21 },
   };
 
-  kwameRep1.pumps = kwameRep1.pumps.map((p) => {
-    const base = kwameBaselines[p.pumpLabelSnapshot];
+  rep14.pumps = rep14.pumps.map((p) => {
+    const base = pumpBaselines[p.pumpLabelSnapshot];
     if (base) {
+      const diff = Math.round((base.close - base.open) * 100) / 100;
+      const up = p.productCodeSnapshot === 'PMS' ? 16.59 : 18.39;
       return {
         ...p,
         openingMeter: base.open,
         closingMeter: base.close,
-        litresSold: Math.round((base.close - base.open) * 100) / 100,
+        litresSold: diff,
+        unitPriceSnapshot: up,
+        amountGhs: Math.round(diff * up * 100) / 100,
+        analogueMeter: base.analogue || null,
         isConfirmed: true,
       };
     }
     return p;
   });
 
-  kwameRep1.stocks = kwameRep1.stocks.map((s) => {
+  rep14.stocks = rep14.stocks.map((s) => {
     if (s.productCodeSnapshot === 'PMS') {
       return {
         ...s,
-        openingStock: 15400,
+        openingStock: 13090,
         receipts: 0,
-        daySales: 3471,
-        theoreticalClosingStock: 11929,
-        physicalClosingStock: 11910,
-        variance: -19,
+        daySales: 342.49,
+        theoreticalClosingStock: 12747.51,
+        physicalClosingStock: 12710,
+        variance: -37.51,
+        unitPriceSnapshot: 16.59,
+        productSalesGhs: 5682,
       };
     } else if (s.productCodeSnapshot === 'AGO') {
       return {
         ...s,
-        openingStock: 22000,
-        receipts: 13500, // tanker discharge
-        daySales: 7040,
-        theoreticalClosingStock: 28460,
-        physicalClosingStock: 28485,
-        variance: +25,
-      };
-    } else {
-      return {
-        ...s,
-        openingStock: 4500,
+        openingStock: 19410,
         receipts: 0,
-        daySales: 470,
-        theoreticalClosingStock: 4030,
-        physicalClosingStock: 4025,
-        variance: -5,
+        daySales: 516.60,
+        theoreticalClosingStock: 18893.40,
+        physicalClosingStock: 18840,
+        variance: -53.40,
+        unitPriceSnapshot: 18.39,
+        productSalesGhs: 9500,
       };
     }
+    return s;
   });
 
-  kwameRep1.expenses = [
-    { id: 'exp_1', category: 'Staff/Meals', description: 'Pump Attendants Lunch Allowance', amountGhs: 180 },
-    { id: 'exp_2', category: 'Utilities', description: 'ECG Prepaid Power Recharge', amountGhs: 350 },
-  ];
+  rep14.expenses = [];
+  rep14.totalSalesGhs = 15182;
+  rep14.totalExpensesGhs = 0;
+  rep14.cashToBankOrTill = 15182;
+  rep14.hubtel = {
+    hubtelAccount: '',
+    dashboardAmount: null,
+    bankingWithHubtel: null,
+  };
 
-  saveDailyReport(kwame.id, kwameRep1);
-
-  // Kwame's Today Report (2026-10-12) with carried forward opening meters!
-  const kwameRepToday = createNewDailyReport(kwame.id, '2026-10-12');
-  kwameRepToday.status = 'In Progress';
-  saveDailyReport(kwame.id, kwameRepToday);
-
-  // 2. Seed Abena (Manager B) in separate isolated workspace with different station name!
-  const abena = DEMO_USERS[1];
-  const abenaWs = getOrCreateWorkspace(abena.id);
-  const abenaRep = createNewDailyReport(abena.id, '2026-10-12');
-  abenaRep.stationNameSnapshot = abenaWs.stationName;
-  saveDailyReport(abena.id, abenaRep);
-
+  saveDailyReport(manager.id, rep14);
   localStorage.setItem(seededKey, 'true');
 }
 
-// Background Supabase Sync helper
 async function syncReportToSupabase(report: DailyReport) {
   const supabase = getSupabaseClient();
   if (!supabase) return;
 
   try {
-    // Upsert report master
-    const { error: repErr } = await supabase
-      .from('reports')
-      .upsert(
-        {
-          id: report.id,
-          workspace_id: report.workspaceId,
-          report_date: report.reportDate,
-          station_name_snapshot: report.stationNameSnapshot,
-          status: report.status,
-          notes: report.notes || null,
-          sent_at: report.sentAt || null,
-          sent_by: report.sentBy || null,
-          sent_via: report.sentVia || null,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'workspace_id,report_date' }
-      );
-
-    if (repErr) {
-      console.warn('Supabase reports upsert error:', repErr);
-    }
+    await supabase.from('reports').upsert(
+      {
+        id: report.id,
+        workspace_id: report.workspaceId,
+        report_date: report.reportDate,
+        station_name_snapshot: report.stationNameSnapshot,
+        status: report.status,
+        notes: report.notes || null,
+        sent_at: report.sentAt || null,
+        sent_by: report.sentBy || null,
+        sent_via: report.sentVia || null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'workspace_id,report_date' }
+    );
   } catch (err) {
-    console.warn('Supabase sync exception:', err);
+    console.warn('Supabase sync notice:', err);
   }
 }
