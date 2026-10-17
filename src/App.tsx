@@ -18,6 +18,8 @@ import {
   HubtelDetails,
   DischargeReport,
   PriceChangeReport,
+  ReportFormatSettings,
+  DEFAULT_REPORT_FORMAT_SETTINGS,
 } from './types/report';
 import {
   getCurrentSessionUser,
@@ -37,6 +39,9 @@ import {
   savePriceChangeReport,
   deletePriceChangeReport,
   logoutUser,
+  getReportFormatSettings,
+  saveReportFormatSettings,
+  resetReportFormatSettings,
 } from './services/dataService';
 import { recalculateReport } from './utils/calculations';
 import { ReportHeader } from './features/reports/ReportHeader';
@@ -53,6 +58,7 @@ import { PhotoPreviewModal } from './features/meters/PhotoPreviewModal';
 import { LandingHomePage } from './features/auth/LandingHomePage';
 import { DischargeReportSection } from './features/discharge/DischargeReportSection';
 import { PriceChangeSection } from './features/pricechange/PriceChangeSection';
+import { ReportFormatManager } from './features/formats/ReportFormatManager';
 import {
   Fuel,
   Layers,
@@ -85,8 +91,15 @@ export default function App() {
   const [dischargeReports, setDischargeReports] = useState<DischargeReport[]>([]);
   const [priceChangeReports, setPriceChangeReports] = useState<PriceChangeReport[]>([]);
 
+  // Customizable report format settings per manager
+  const [formatSettings, setFormatSettings] = useState<ReportFormatSettings>(() =>
+    currentUser ? getReportFormatSettings(currentUser.id) : DEFAULT_REPORT_FORMAT_SETTINGS
+  );
+
   // Active navigation tab
-  const [activeTab, setActiveTab] = useState<'meters' | 'stock' | 'discharge' | 'pricechange' | 'expenses' | 'setup'>('meters');
+  const [activeTab, setActiveTab] = useState<
+    'meters' | 'stock' | 'discharge' | 'pricechange' | 'expenses' | 'setup' | 'formats'
+  >('meters');
 
   // Modals state
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
@@ -135,6 +148,9 @@ export default function App() {
 
     const pcReports = getPriceChangeReports(user.id);
     setPriceChangeReports(pcReports);
+
+    const fSettings = getReportFormatSettings(user.id);
+    setFormatSettings(fSettings);
   }, [currentUser, selectedDate]);
 
   useEffect(() => {
@@ -330,7 +346,8 @@ export default function App() {
   const handleAcceptCameraPhoto = (
     photoDataUrl: string,
     candidateReading?: number | null,
-    confidence?: number
+    confidence?: number,
+    metadata?: any
   ) => {
     if (!activeCameraPump || !report) return;
 
@@ -340,6 +357,12 @@ export default function App() {
       candidateOcrReading: candidateReading ?? activeCameraPump.candidateOcrReading,
       ocrConfidence: confidence ?? activeCameraPump.ocrConfidence,
       ocrStatus: candidateReading !== null && candidateReading !== undefined ? 'candidate' : 'idle',
+      aiVisionReading: candidateReading ?? activeCameraPump.aiVisionReading,
+      aiVisionConfidence: confidence ?? activeCameraPump.aiVisionConfidence,
+      aiVisionClear: metadata?.isClear ?? (candidateReading !== null && candidateReading !== undefined),
+      aiVisionMeterType: metadata?.meterType,
+      aiVisionRawDigits: metadata?.rawDigitsDetected,
+      aiVisionUnclearReason: metadata?.unclearReason,
     };
 
     handleUpdatePump(pumpReadingId, partial);
@@ -417,6 +440,19 @@ export default function App() {
     setPriceChangeReports(getPriceChangeReports(currentUser.id));
   };
 
+  // Format settings handlers
+  const handleSaveFormatSettings = (updated: ReportFormatSettings) => {
+    if (!currentUser) return;
+    saveReportFormatSettings(currentUser.id, updated);
+    setFormatSettings(updated);
+  };
+
+  const handleResetFormatSettings = () => {
+    if (!currentUser) return;
+    const reset = resetReportFormatSettings(currentUser.id);
+    setFormatSettings(reset);
+  };
+
   // If user is not authenticated, render the high-impact OMC Homepage & Auth Form
   if (!currentUser) {
     return <LandingHomePage onLoginSuccess={handleLoginSuccess} />;
@@ -447,30 +483,62 @@ export default function App() {
         onOpenAccount={() => setIsAccountModalOpen(true)}
         onOpenReview={() => setIsSendModalOpen(true)}
         onSignOut={handleSignOut}
+        onOpenFormatSettings={() => setActiveTab('formats')}
         isAutoSaving={isAutoSaving}
       />
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4 pb-24 sm:pb-8">
-        {/* Shift Type & Live Price Status Bar */}
+        {/* Report Type & Live Price Status Bar */}
         <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/70 p-3 rounded-2xl border border-slate-800 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="text-slate-400 font-semibold">Report Shift:</span>
-            <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
-              {(['Evening Report', 'Morning Report', 'Full Day'] as const).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => handleUpdateShiftType(s)}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                    report.shiftType === s
-                      ? 'bg-amber-500 text-slate-950 shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {s}
-                </button>
-              ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-slate-400 font-semibold flex items-center gap-1.5">
+              <span>Report Type:</span>
+            </span>
+            <div className="flex flex-wrap items-center bg-slate-950 p-1 rounded-xl border border-slate-800 gap-1">
+              {[
+                { id: 'Morning Report', label: 'Morning' },
+                { id: 'Evening Report', label: 'Evening' },
+                { id: 'Price Change Report', label: 'Price Change' },
+                { id: 'Discharge Report', label: 'Discharge' },
+              ].map(({ id, label }) => {
+                const isSelected =
+                  report.shiftType === id ||
+                  (id === 'Discharge Report' && activeTab === 'discharge') ||
+                  (id === 'Price Change Report' && (report.shiftType === 'Price Change Report' || activeTab === 'pricechange'));
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => {
+                      handleUpdateShiftType(id);
+                      if (id === 'Discharge Report') {
+                        setActiveTab('discharge');
+                      } else if (id === 'Price Change Report') {
+                        // User can prepare the price change daily report or view revaluation
+                        if (activeTab === 'discharge') {
+                          setActiveTab('meters');
+                        }
+                      } else {
+                        if (activeTab === 'discharge' || activeTab === 'pricechange') {
+                          setActiveTab('meters');
+                        }
+                      }
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                      isSelected
+                        ? id === 'Discharge Report'
+                          ? 'bg-purple-500 text-white shadow-sm'
+                          : id === 'Price Change Report'
+                          ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                          : 'bg-amber-500 text-slate-950 shadow-sm'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                    }`}
+                  >
+                    <span>{id}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -572,6 +640,20 @@ export default function App() {
             <Sliders className="w-4 h-4" />
             <span>Pump Setup</span>
           </button>
+
+          <button
+            type="button"
+            id="tab-formats"
+            onClick={() => setActiveTab('formats')}
+            className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 whitespace-nowrap ${
+              activeTab === 'formats'
+                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <Sliders className="w-4 h-4 text-cyan-400" />
+            <span>Report Formats</span>
+          </button>
         </div>
 
         {/* Tab 1: Pump Meters & In-App Camera */}
@@ -612,6 +694,7 @@ export default function App() {
             dischargeReports={dischargeReports}
             onSaveReport={handleSaveDischarge}
             onDeleteReport={handleDeleteDischarge}
+            formatSettings={formatSettings}
           />
         )}
 
@@ -625,6 +708,7 @@ export default function App() {
             priceChangeReports={priceChangeReports}
             onSaveReport={handleSavePriceChange}
             onDeleteReport={handleDeletePriceChange}
+            formatSettings={formatSettings}
           />
         )}
 
@@ -644,6 +728,18 @@ export default function App() {
             products={products}
             pumps={pumps}
             onConfigChanged={() => reloadWorkspaceAndData()}
+          />
+        )}
+
+        {/* Tab 7: Customizable Station Report Formats Studio */}
+        {activeTab === 'formats' && (
+          <ReportFormatManager
+            currentSettings={formatSettings}
+            onSaveSettings={handleSaveFormatSettings}
+            onResetSettings={handleResetFormatSettings}
+            sampleReport={report}
+            sampleDischargeReport={dischargeReports[0]}
+            samplePriceChangeReport={priceChangeReports[0]}
           />
         )}
       </main>
@@ -712,12 +808,14 @@ export default function App() {
         onPreviewPhoto={handlePreviewPhoto}
       />
 
-      {/* Review & Share Modal with Oborpah Asesewa Format */}
+      {/* Review & Share Modal with Customizable Station Format */}
       <SendReportModal
         isOpen={isSendModalOpen}
         onClose={() => setIsSendModalOpen(false)}
         report={report}
         onUpdateStatus={handleUpdateStatus}
+        formatSettings={formatSettings}
+        onOpenFormatSettings={() => setActiveTab('formats')}
       />
 
       {/* History Modal */}

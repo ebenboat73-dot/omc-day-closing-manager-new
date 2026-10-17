@@ -4,8 +4,21 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Camera, RefreshCw, Check, Download, Share2, Sparkles, X, AlertTriangle, Image as ImageIcon, CheckCircle2 } from 'lucide-react';
-import { recognizeMeterImage } from '../ocr/ocrService';
+import {
+  Camera,
+  RefreshCw,
+  Check,
+  Download,
+  Share2,
+  Sparkles,
+  X,
+  AlertTriangle,
+  Image as ImageIcon,
+  CheckCircle2,
+  Eye,
+  Info,
+} from 'lucide-react';
+import { analyzeMeterPhotoWithAI, AiVisionResult } from '../../services/aiVisionService';
 import { preprocessMeterImage } from '../ocr/imagePreprocessing';
 
 interface InAppCameraModalProps {
@@ -14,7 +27,12 @@ interface InAppCameraModalProps {
   pumpLabel: string;
   productCode: string;
   expectedOpeningValue?: number | null;
-  onAcceptPhoto: (photoDataUrl: string, candidateReading?: number | null, confidence?: number) => void;
+  onAcceptPhoto: (
+    photoDataUrl: string,
+    candidateReading?: number | null,
+    confidence?: number,
+    metadata?: Partial<AiVisionResult>
+  ) => void;
 }
 
 export const InAppCameraModal: React.FC<InAppCameraModalProps> = ({
@@ -29,9 +47,9 @@ export const InAppCameraModal: React.FC<InAppCameraModalProps> = ({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
-  const [isOcrProcessing, setIsOcrProcessing] = useState(false);
-  const [ocrProgress, setOcrProgress] = useState(0);
-  const [ocrResult, setOcrResult] = useState<{ candidate: number | null; confidence: number; text?: string } | null>(null);
+  const [isAiProcessing, setIsAiProcessing] = useState(false);
+  const [aiStatusMessage, setAiStatusMessage] = useState('Analyzing meter image with AI Vision...');
+  const [aiVisionResult, setAiVisionResult] = useState<AiVisionResult | null>(null);
   const [gallerySaveNotice, setGallerySaveNotice] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -117,27 +135,36 @@ export const InAppCameraModal: React.FC<InAppCameraModalProps> = ({
     }
 
     setCapturedPhoto(dataUrl);
-    setOcrResult(null);
+    setAiVisionResult(null);
 
-    // Auto-run OCR suggestion in background
-    runOcrOnPhoto(dataUrl);
+    // Auto-run AI Vision meter analysis in background
+    runAiVisionOnPhoto(dataUrl);
   };
 
-  // Run OCR
-  const runOcrOnPhoto = async (dataUrl: string) => {
-    setIsOcrProcessing(true);
-    setOcrProgress(15);
+  // Run AI Vision Analysis
+  const runAiVisionOnPhoto = async (dataUrl: string) => {
+    setIsAiProcessing(true);
+    setAiStatusMessage('AI Vision scanning pump totalizer meter...');
     try {
-      const res = await recognizeMeterImage(dataUrl, expectedOpeningValue, (p) => setOcrProgress(p));
-      setOcrResult({
-        candidate: res.candidate,
-        confidence: res.confidence,
-        text: res.rawText,
+      const res = await analyzeMeterPhotoWithAI(dataUrl, {
+        expectedOpeningValue,
+        pumpLabel,
+        productCode,
+        onProgress: (msg) => setAiStatusMessage(msg),
       });
-    } catch (e) {
-      console.warn('OCR processing failed:', e);
+      setAiVisionResult(res);
+    } catch (e: any) {
+      console.warn('AI Vision processing failed:', e);
+      setAiVisionResult({
+        success: false,
+        reading: null,
+        confidence: 0,
+        isClear: false,
+        suggestManualEntry: true,
+        unclearReason: 'Analysis interrupted. Manual entry remains available.',
+      });
     } finally {
-      setIsOcrProcessing(false);
+      setIsAiProcessing(false);
     }
   };
 
@@ -156,7 +183,7 @@ export const InAppCameraModal: React.FC<InAppCameraModalProps> = ({
         await navigator.share({
           files: [file],
           title: `${pumpLabel} Meter Photo`,
-          text: `Meter reading photo for ${pumpLabel} - OMC Daily Report`,
+          text: `Meter reading photo for ${pumpLabel} - Daily Report`,
         });
         setGallerySaveNotice('Share sheet opened! Select "Save Image" to store in Photos/Gallery.');
       } else {
@@ -171,7 +198,6 @@ export const InAppCameraModal: React.FC<InAppCameraModalProps> = ({
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
-        // Fallback download
         const link = document.createElement('a');
         link.href = capturedPhoto;
         link.download = `${pumpLabel}_meter.jpg`;
@@ -194,7 +220,7 @@ export const InAppCameraModal: React.FC<InAppCameraModalProps> = ({
       const { processedDataUrl } = await preprocessMeterImage(file);
       setCapturedPhoto(processedDataUrl);
       setCameraError(null);
-      runOcrOnPhoto(processedDataUrl);
+      runAiVisionOnPhoto(processedDataUrl);
     } catch (err) {
       console.warn('Error reading uploaded image:', err);
     }
@@ -203,15 +229,20 @@ export const InAppCameraModal: React.FC<InAppCameraModalProps> = ({
   // Retake photo
   const handleRetake = () => {
     setCapturedPhoto(null);
-    setOcrResult(null);
+    setAiVisionResult(null);
     setGallerySaveNotice(null);
     startCamera();
   };
 
-  // Accept and finish
+  // Accept and finish with manager review
   const handleAccept = () => {
     if (!capturedPhoto) return;
-    onAcceptPhoto(capturedPhoto, ocrResult?.candidate, ocrResult?.confidence);
+    onAcceptPhoto(
+      capturedPhoto,
+      aiVisionResult?.reading,
+      aiVisionResult?.confidence,
+      aiVisionResult || undefined
+    );
     onClose();
   };
 
@@ -335,51 +366,90 @@ export const InAppCameraModal: React.FC<InAppCameraModalProps> = ({
           </div>
         )}
 
-        {/* OCR Result / Suggestion Area if Photo is Captured */}
+        {/* AI Vision Result / Suggestion Area if Photo is Captured */}
         {capturedPhoto && (
-          <div className="p-3 bg-slate-800/70 border-t border-slate-700/80">
-            {isOcrProcessing ? (
-              <div className="flex items-center gap-3 py-1">
+          <div className="p-3.5 bg-slate-900 border-t border-slate-800">
+            {isAiProcessing ? (
+              <div className="flex items-center gap-3 py-2">
                 <RefreshCw className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
                 <div className="flex-1">
                   <div className="flex justify-between text-xs text-slate-300 mb-1">
-                    <span>Analyzing meter digits...</span>
-                    <span>{ocrProgress}%</span>
+                    <span className="font-medium text-amber-300">{aiStatusMessage}</span>
+                    <span className="text-slate-400 font-mono text-[11px]">Gemini Vision</span>
                   </div>
-                  <div className="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-amber-400 transition-all duration-300"
-                      style={{ width: `${ocrProgress}%` }}
-                    />
+                  <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-amber-500 to-amber-300 w-3/4 animate-pulse rounded-full" />
                   </div>
                 </div>
               </div>
-            ) : ocrResult?.candidate !== null && ocrResult?.candidate !== undefined ? (
-              <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-amber-400" />
-                  <div>
-                    <span className="text-[11px] font-medium text-slate-400 block">OCR Detected Reading:</span>
-                    <span className="font-mono text-base font-bold text-amber-300">
-                      {ocrResult.candidate.toLocaleString(undefined, { minimumFractionDigits: 1 })}
+            ) : aiVisionResult?.reading !== null && aiVisionResult?.reading !== undefined && aiVisionResult.isClear ? (
+              <div className="bg-slate-950/80 border border-emerald-500/40 rounded-xl p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-emerald-400" />
+                    <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">
+                      AI Vision Detected Reading
                     </span>
                   </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                      {aiVisionResult.confidence}% Confidence
+                    </span>
+                    {aiVisionResult.meterType && (
+                      <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 capitalize">
+                        {aiVisionResult.meterType.replace('_', ' ')}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="text-right">
-                  <span className="text-[10px] text-slate-400 block">Confidence: {ocrResult.confidence}%</span>
-                  <span className="text-[10px] font-semibold text-emerald-400">Manager Verification Authoritative</span>
+
+                <div className="flex items-baseline justify-between pt-1">
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-mono text-2xl font-black text-emerald-400 tracking-tight">
+                      {aiVisionResult.reading.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 3 })}
+                    </span>
+                    <span className="text-xs font-bold text-slate-400">Litres</span>
+                  </div>
+                  <span className="text-[11px] text-slate-400">
+                    Raw: <code className="text-slate-200 font-mono">{aiVisionResult.rawDigitsDetected || '—'}</code>
+                  </span>
                 </div>
+
+                <p className="text-[10px] text-slate-400 border-t border-slate-800/80 pt-1.5">
+                  Review the detected reading above. Tap <strong>Accept for {pumpLabel}</strong> below to confirm and apply to your daily report ledger.
+                </p>
               </div>
             ) : (
-              <div className="flex items-center justify-between text-xs text-slate-400 px-1 py-1">
-                <span>OCR could not detect clear digits. Manual entry remains authoritative.</span>
-                <button
-                  type="button"
-                  onClick={() => runOcrOnPhoto(capturedPhoto)}
-                  className="text-amber-400 hover:underline text-xs font-semibold"
-                >
-                  Retry OCR
-                </button>
+              <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/40 space-y-2">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div className="flex-1 text-xs">
+                    <span className="font-bold text-amber-200 block">
+                      AI Vision Notice: {aiVisionResult?.unclearReason || 'Unclear or Glared Meter Display'}
+                    </span>
+                    <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
+                      To prevent accounting errors, AI does not guess uncertain digits. You can capture a clearer, glare-free photo or simply enter the reading manually.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-1 border-t border-amber-500/20">
+                  <button
+                    type="button"
+                    onClick={() => runAiVisionOnPhoto(capturedPhoto)}
+                    className="px-2.5 py-1 text-xs font-semibold text-amber-300 hover:text-white flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Re-analyze Image</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg shadow"
+                  >
+                    Enter Manually
+                  </button>
+                </div>
               </div>
             )}
           </div>

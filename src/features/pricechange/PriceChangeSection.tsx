@@ -12,6 +12,7 @@ import {
   ConfiguredPump,
   StationWorkspace,
   PriceChangePumpReading,
+  ReportFormatSettings,
 } from '../../types/report';
 import {
   DollarSign,
@@ -37,6 +38,7 @@ interface PriceChangeSectionProps {
   priceChangeReports: PriceChangeReport[];
   onSaveReport: (report: PriceChangeReport) => void;
   onDeleteReport: (reportId: string) => void;
+  formatSettings?: ReportFormatSettings;
 }
 
 export const PriceChangeSection: React.FC<PriceChangeSectionProps> = ({
@@ -47,6 +49,7 @@ export const PriceChangeSection: React.FC<PriceChangeSectionProps> = ({
   priceChangeReports,
   onSaveReport,
   onDeleteReport,
+  formatSettings,
 }) => {
   const [selectedReportId, setSelectedReportId] = useState<string>(
     priceChangeReports[0]?.id || ''
@@ -424,7 +427,7 @@ export const PriceChangeSection: React.FC<PriceChangeSectionProps> = ({
                 </div>
                 <button
                   type="button"
-                  onClick={() => handleCopyText(formatPriceChangeText(activeReport))}
+                  onClick={() => handleCopyText(formatPriceChangeText(activeReport, formatSettings))}
                   className="text-xs font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1"
                 >
                   {copiedText ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -434,14 +437,14 @@ export const PriceChangeSection: React.FC<PriceChangeSectionProps> = ({
 
               <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
                 <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap select-all leading-relaxed">
-                  {formatPriceChangeText(activeReport)}
+                  {formatPriceChangeText(activeReport, formatSettings)}
                 </pre>
               </div>
 
               <div className="pt-2">
                 <button
                   type="button"
-                  onClick={() => handleShareWhatsApp(formatPriceChangeText(activeReport))}
+                  onClick={() => handleShareWhatsApp(formatPriceChangeText(activeReport, formatSettings))}
                   className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg"
                 >
                   <Share2 className="w-4 h-4" />

@@ -45,29 +45,38 @@ The OMC Manager Day Sales & Stock Reporting App provides a fast, reliable, phone
 - Sign In & Station Registration with **"Stay logged in on this device"** checkbox.
 - 1-Click quick demo access as Station Manager (Oborpah Asesewa) or Tema Station Manager.
 
-### 2. Daily Sales & Meter Readings
-- Dynamic pump cards (S1–S4 for PMS, D1–D4 for AGO, or custom configurations).
-- Removable pumps with instant confirmation.
-- Editable unit prices (default: PMS @ ¢16.59, AGO @ ¢18.39).
-- Total sales per pump (L and GHS) and total revenue per product.
-- Mechanical / Analogue totalizer reading inputs (e.g. S3-483179, D1-232567).
+### 2. Unified Report Types (Morning, Evening, Price Change & Discharge)
+- **Report Type Selector**: Seamlessly switch between **Morning Report**, **Evening Report**, **Price Change Report**, and **Discharge Report** directly from the top status bar.
+- **Price Change Report**: Formatted in the exact same standard executive layout as Morning & Evening reports—recording pump meters, litres sold, unit prices, tank dipping, variance, analogue readings, and cash account reconciliation—while clearly labeled as a Price Change Report for head office. In addition, an optional cutover revaluation calculator accounts for stock gains/losses in GHS.
+- **Discharge Report**: Complete Before & After discharge reconciliation with Stock Underground, Invoice volume, Expected Stock, Closing Meters, and automatic Overage/Shortage calculations.
+- **Daily Sales & Meter Readings**:
+  - Dynamic pump cards (S1–S4 for PMS, D1–D4 for AGO, or custom configurations).
+  - Removable pumps with instant confirmation (omitted or unoperated pumps are treated as idle without blocking report sending).
+  - Editable unit prices (default: PMS @ ¢16.59, AGO @ ¢18.39).
+  - Total sales per pump (L and GHS), total revenue per product, and live Cash in Till.
+  - Mechanical / Analogue totalizer reading inputs (e.g. S3-483179, D1-232567).
 
 ### 3. Stock Dipping & Dipping Camera
-- Camera capture directly at the tank dipstick.
+- Camera capture directly at the tank dipstick with preview and save options.
 - Physical dipping vs Theoretical Stock with instant color-coded variance.
 - Total fuel revenue minus expenses = Cash in Till.
 - Hubtel digital banking reconciliation.
 
-### 4. Fuel Discharge Reports
-- **Before Discharge**: Stock Underground + Invoice Quantity = Expected Stock, plus Opening Meters for discharge pumps.
-- **After Discharge**: Physical Stock After Discharge, Litres Sold During Discharge, Theoretical Stock, and calculated **Overage / Shortage** (e.g. `+60 L OVERAGE`), plus Closing Meters.
-- Real-time formatted executive WhatsApp text ready to copy or share.
-
-### 5. Price Change Reports
-- Effective cutover date & time (e.g. 11:59PM).
-- Old Price -> New Price -> Price Difference.
-- Pump meters at cutover and litres sold at old price.
-- Physical tank stock and total **Stock Gain or Loss Value** in GHS.
+### 5. Per-Manager Customizable Report Formats Studio
+- **Customizable Layout for All Reports**: Each station manager can set their preferred structure, field labels, and layout for Morning, Evening, Price Change, and Fuel Discharge reports.
+- **1-Click Presets**:
+  - *Oborpah Asesewa Standard (Default)*: Authentic Ghanaian OMC layout formatted for instant executive WhatsApp delivery.
+  - *Corporate OMC Ghana*: Title case station header, `GH¢` currency symbol, `Litres` unit, and formal audit note.
+  - *Compact WhatsApp Summary*: Condensed single-line text for quick transmission.
+  - *Detailed Full Station Audit*: Includes opening and closing meters, individual pump sales, tank dipping, itemized expenses, Hubtel balances, mechanical totalizers, and manager sign-off.
+- **Granular Formatting Controls**:
+  - Station name style (Uppercase vs Title Case), date formats (`DD/MM/YYYY`, `DD-MM-YYYY`, `YYYY-MM-DD`, `D MMM YYYY`), currency (`¢`, `GH¢`, `GHS`), volume units (`L`, `Litres`).
+  - Pump separator (`=`, `:`, ` - `), pump decimals (`.00` vs whole litres), individual pump sales toggle, opening meters toggle.
+  - Cash account headers, custom Total Sales labels, expense presentation styles (itemized, total only, hidden), Hubtel block toggle, Analogue totalizer block toggle.
+  - Custom header announcements and manager footer sign-off notes.
+- **Responsive Mobile & PC Experience**:
+  - **PC / Desktop**: Side-by-side two-column studio with live sticky executive message preview updating in real time as any setting or label changes.
+  - **Mobile**: Touch-optimized segmented controls ($\ge 44\text{px}$ targets) for fluid toggling between Format Controls and Live Message Preview, plus a sticky mobile bottom action bar for 1-tap review and dispatch.
 
 ---
 

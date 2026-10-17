@@ -11,6 +11,7 @@ import {
   ConfiguredPump,
   StationWorkspace,
   DischargePumpMeter,
+  ReportFormatSettings,
 } from '../../types/report';
 import {
   Truck,
@@ -43,6 +44,7 @@ interface DischargeReportSectionProps {
   dischargeReports: DischargeReport[];
   onSaveReport: (report: DischargeReport) => void;
   onDeleteReport: (reportId: string) => void;
+  formatSettings?: ReportFormatSettings;
 }
 
 export const DischargeReportSection: React.FC<DischargeReportSectionProps> = ({
@@ -53,6 +55,7 @@ export const DischargeReportSection: React.FC<DischargeReportSectionProps> = ({
   dischargeReports,
   onSaveReport,
   onDeleteReport,
+  formatSettings,
 }) => {
   const [selectedReportId, setSelectedReportId] = useState<string>(
     dischargeReports[0]?.id || ''
@@ -474,7 +477,7 @@ export const DischargeReportSection: React.FC<DischargeReportSectionProps> = ({
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 <button
                   type="button"
-                  onClick={() => handleCopyText(formatBeforeDischargeText(activeReport), 'before')}
+                  onClick={() => handleCopyText(formatBeforeDischargeText(activeReport, formatSettings), 'before')}
                   className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 transition-colors"
                 >
                   {copiedBefore ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -483,7 +486,7 @@ export const DischargeReportSection: React.FC<DischargeReportSectionProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => handleShareWhatsApp(formatBeforeDischargeText(activeReport))}
+                  onClick={() => handleShareWhatsApp(formatBeforeDischargeText(activeReport, formatSettings))}
                   className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 transition-colors"
                 >
                   <Share2 className="w-3.5 h-3.5" />
@@ -642,7 +645,7 @@ export const DischargeReportSection: React.FC<DischargeReportSectionProps> = ({
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 <button
                   type="button"
-                  onClick={() => handleCopyText(formatAfterDischargeText(activeReport), 'after')}
+                  onClick={() => handleCopyText(formatAfterDischargeText(activeReport, formatSettings), 'after')}
                   className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 transition-colors"
                 >
                   {copiedAfter ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -651,7 +654,7 @@ export const DischargeReportSection: React.FC<DischargeReportSectionProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => handleShareWhatsApp(formatAfterDischargeText(activeReport))}
+                  onClick={() => handleShareWhatsApp(formatAfterDischargeText(activeReport, formatSettings))}
                   className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 transition-colors"
                 >
                   <Share2 className="w-3.5 h-3.5" />
@@ -673,7 +676,7 @@ export const DischargeReportSection: React.FC<DischargeReportSectionProps> = ({
                 </div>
                 <button
                   type="button"
-                  onClick={() => handleCopyText(formatCompleteDischargeText(activeReport), 'full')}
+                  onClick={() => handleCopyText(formatCompleteDischargeText(activeReport, formatSettings), 'full')}
                   className="text-xs font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1"
                 >
                   {copiedFull ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -687,7 +690,7 @@ export const DischargeReportSection: React.FC<DischargeReportSectionProps> = ({
                   -- BEFORE DISCHARGE MESSAGE --
                 </span>
                 <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap select-all leading-relaxed">
-                  {formatBeforeDischargeText(activeReport)}
+                  {formatBeforeDischargeText(activeReport, formatSettings)}
                 </pre>
               </div>
 
@@ -697,14 +700,14 @@ export const DischargeReportSection: React.FC<DischargeReportSectionProps> = ({
                   -- AFTER DISCHARGE MESSAGE --
                 </span>
                 <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap select-all leading-relaxed">
-                  {formatAfterDischargeText(activeReport)}
+                  {formatAfterDischargeText(activeReport, formatSettings)}
                 </pre>
               </div>
 
               <div className="pt-2">
                 <button
                   type="button"
-                  onClick={() => handleShareWhatsApp(formatCompleteDischargeText(activeReport))}
+                  onClick={() => handleShareWhatsApp(formatCompleteDischargeText(activeReport, formatSettings))}
                   className="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg"
                 >
                   <Share2 className="w-4 h-4" />

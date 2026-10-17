@@ -71,6 +71,12 @@ export interface ReportPumpReading {
   ocrConfidence?: number;
   ocrStatus: OcrStatus;
   ocrError?: string;
+  aiVisionReading?: number | null;
+  aiVisionConfidence?: number;
+  aiVisionClear?: boolean;
+  aiVisionMeterType?: string;
+  aiVisionRawDigits?: string;
+  aiVisionUnclearReason?: string | null;
   isConfirmed: boolean;
   isRollover: boolean;
   rolloverCapacity: number; // default 100000
@@ -284,3 +290,93 @@ export const PUMP_SEQUENCE: { id: PumpId; product: ProductType; name: string; po
   { id: 'D3', product: 'AGO', name: 'D3 (Diesel)', position: 7 },
   { id: 'D4', product: 'AGO', name: 'D4 (Diesel)', position: 8 },
 ];
+
+/**
+ * Report Format Configuration for Station Managers
+ * Allows each manager to define custom structures, labels, and formatting rules
+ * for Morning, Evening, Price Change, and Discharge reports.
+ */
+export interface ReportFormatSettings {
+  // Preset identifier
+  presetId: 'oborpah_default' | 'omc_standard' | 'compact' | 'detailed_audit' | 'custom';
+
+  // Station Header & Meta
+  stationHeaderCase: 'uppercase' | 'titlecase';
+  dateFormat: 'DD/MM/YYYY' | 'DD-MM-YYYY' | 'YYYY-MM-DD' | 'D MMM YYYY';
+  includeLocation: boolean;
+  includeTimestamp: boolean;
+  headerCustomNote: string;
+  footerCustomNote: string;
+  currencySymbol: string; // e.g. '¢' | 'GH¢' | 'GHS'
+  volumeUnit: string; // e.g. 'L' | 'Litres' | ''
+
+  // Product Section Formatting
+  pumpSeparator: string; // '=' | ':' | ' = ' | ' - ' | ' : '
+  pumpDecimals: number; // 2 or 0
+  showOpeningMetersInDaily: boolean;
+  showIndividualPumpSold: boolean;
+  showTotalLitresSoldLine: boolean;
+  showProductSalesGhs: boolean;
+  showPhysicalStock: boolean;
+  showUnitPrice: boolean;
+  showVariance: boolean;
+  varianceLabel: string; // 'Variance' | 'Stock Variance' | 'Diff'
+
+  // Cash Account Section
+  cashAccountTitle: string; // 'CASH ACCOUNT' | 'FINANCIAL SUMMARY'
+  totalSalesLabel: string; // 'TOTAL- SALES' | 'TOTAL SALES:'
+  expensesStyle: 'itemized' | 'total_only' | 'hidden';
+  cashToBankLabel: string; // 'CASH TO BANK(or IN TILL)' | 'CASH IN TILL'
+  showHubtelSection: boolean;
+  showAnalogueSection: boolean;
+
+  // Discharge Report Formatting
+  dischargeIncludeTruckDriver: boolean;
+  dischargeBeforeTitle: string; // 'BEFORE DISCHARGE'
+  dischargeAfterTitle: string; // 'AFTER DISCHARGE'
+  dischargeOverageLabel: string; // 'OVERAGE'
+  dischargeShortageLabel: string; // 'SHORTAGE'
+
+  // Price Change Report Formatting
+  priceChangeTitle: string; // 'PRICE CHANGE REPORT'
+  showStockRevaluationGhs: boolean;
+}
+
+export const DEFAULT_REPORT_FORMAT_SETTINGS: ReportFormatSettings = {
+  presetId: 'oborpah_default',
+  stationHeaderCase: 'uppercase',
+  dateFormat: 'DD/MM/YYYY',
+  includeLocation: false,
+  includeTimestamp: false,
+  headerCustomNote: '',
+  footerCustomNote: '',
+  currencySymbol: '¢',
+  volumeUnit: '',
+
+  pumpSeparator: '=',
+  pumpDecimals: 2,
+  showOpeningMetersInDaily: false,
+  showIndividualPumpSold: false,
+  showTotalLitresSoldLine: true,
+  showProductSalesGhs: true,
+  showPhysicalStock: true,
+  showUnitPrice: true,
+  showVariance: true,
+  varianceLabel: 'Variance',
+
+  cashAccountTitle: 'CASH ACCOUNT',
+  totalSalesLabel: 'TOTAL- SALES',
+  expensesStyle: 'itemized',
+  cashToBankLabel: 'CASH TO BANK(or IN TILL)',
+  showHubtelSection: true,
+  showAnalogueSection: true,
+
+  dischargeIncludeTruckDriver: true,
+  dischargeBeforeTitle: 'BEFORE DISCHARGE',
+  dischargeAfterTitle: 'AFTER DISCHARGE',
+  dischargeOverageLabel: 'OVERAGE',
+  dischargeShortageLabel: 'SHORTAGE',
+
+  priceChangeTitle: 'PRICE CHANGE REPORT',
+  showStockRevaluationGhs: true,
+};

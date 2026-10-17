@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { DailyReport, ReportStatus } from '../../types/report';
+import { DailyReport, ReportStatus, ReportFormatSettings } from '../../types/report';
 import { generateStandardReportText, getShareUrls } from './reportFormatter';
 import {
   X,
@@ -19,6 +19,7 @@ import {
   Download,
   Printer,
   Sparkles,
+  Sliders,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -27,6 +28,8 @@ interface SendReportModalProps {
   onClose: () => void;
   report: DailyReport;
   onUpdateStatus: (status: ReportStatus, sentVia?: any) => void;
+  formatSettings?: ReportFormatSettings;
+  onOpenFormatSettings?: () => void;
 }
 
 interface ValidationCheck {
@@ -42,6 +45,8 @@ export const SendReportModal: React.FC<SendReportModalProps> = ({
   onClose,
   report,
   onUpdateStatus,
+  formatSettings,
+  onOpenFormatSettings,
 }) => {
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'review' | 'preview'>('review');
@@ -122,7 +127,7 @@ export const SendReportModal: React.FC<SendReportModalProps> = ({
   const allPassed = checks.every((c) => c.passed || c.severity === 'warning');
   const hasErrors = checks.some((c) => !c.passed && c.severity === 'error');
 
-  const formattedReport = generateStandardReportText(report);
+  const formattedReport = generateStandardReportText(report, formatSettings);
   const shareUrls = getShareUrls(formattedReport);
 
   const handleCopyClipboard = async () => {
@@ -210,32 +215,49 @@ export const SendReportModal: React.FC<SendReportModalProps> = ({
         </div>
 
         {/* Tab switcher */}
-        <div className="px-5 pt-3 border-b border-slate-800 flex gap-2">
-          <button
-            type="button"
-            onClick={() => setActiveTab('review')}
-            className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 ${
-              activeTab === 'review'
-                ? 'border-amber-400 text-amber-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            <span>Completion Checks ({checks.filter((c) => c.passed).length}/{checks.length})</span>
-          </button>
+        <div className="px-5 pt-3 border-b border-slate-800 flex items-center justify-between gap-2">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab('review')}
+              className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 ${
+                activeTab === 'review'
+                  ? 'border-amber-400 text-amber-400'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Completion Checks ({checks.filter((c) => c.passed).length}/{checks.length})</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab('preview')}
-            className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 ${
-              activeTab === 'preview'
-                ? 'border-amber-400 text-amber-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <FileText className="w-4 h-4" />
-            <span>Standard Report Text</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('preview')}
+              className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 ${
+                activeTab === 'preview'
+                  ? 'border-amber-400 text-amber-400'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              <span>Standard Report Text</span>
+            </button>
+          </div>
+
+          {onOpenFormatSettings && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenFormatSettings();
+              }}
+              className="pb-2 text-xs text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-1 transition-colors"
+              title="Customize WhatsApp text format, field names, and ordering"
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Customize Format</span>
+            </button>
+          )}
         </div>
 
         {/* Modal Body */}

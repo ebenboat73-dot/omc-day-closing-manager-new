@@ -1,6 +1,6 @@
 {
-  "name": "OMC Day Sales & Stock Reporting",
-  "description": "Mobile-first daily fuel pump meter reading, sales aggregation, stock reconciliation, and reporting app for station managers.",
+  "name": "Forecourt Pro - Global Station Day Closing & Stock Reconciliation",
+  "description": "The premier daily closing, fuel pump meter AI vision reading, and stock reconciliation platform for filling stations and fuel retailers worldwide. Start 100% free with automated pump variance, tank dipping, and instant executive reports.",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

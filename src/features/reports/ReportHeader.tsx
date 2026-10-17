@@ -17,6 +17,7 @@ interface ReportHeaderProps {
   onOpenAccount: () => void;
   onOpenReview: () => void;
   onSignOut?: () => void;
+  onOpenFormatSettings?: () => void;
   isAutoSaving?: boolean;
 }
 
@@ -38,6 +39,7 @@ export const ReportHeader: React.FC<ReportHeaderProps> = ({
   onOpenAccount,
   onOpenReview,
   onSignOut,
+  onOpenFormatSettings,
   isAutoSaving = false,
 }) => {
   const statusStyle = STATUS_COLORS[report.status] || STATUS_COLORS.Draft;
@@ -83,13 +85,17 @@ export const ReportHeader: React.FC<ReportHeaderProps> = ({
                     {report.stationNameSnapshot || workspace.stationName}
                   </span>
                   <span>•</span>
+                  <span className="text-amber-400 font-bold px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-[11px]">
+                    {report.shiftType || 'Evening Report'}
+                  </span>
+                  <span>•</span>
                   <button
                     type="button"
                     onClick={onOpenAccount}
-                    className="text-amber-400 hover:underline flex items-center gap-1 shrink-0"
+                    className="text-slate-300 hover:text-amber-400 flex items-center gap-1 shrink-0 transition-colors"
                     title="Account & Station Workspace"
                   >
-                    <User className="w-3 h-3" />
+                    <User className="w-3 h-3 text-amber-400" />
                     <span>{currentUser.fullName}</span>
                   </button>
                 </p>
@@ -157,6 +163,18 @@ export const ReportHeader: React.FC<ReportHeaderProps> = ({
                 <Sliders className="w-3.5 h-3.5 text-amber-400" />
                 <span>Pump Setup</span>
               </button>
+
+              {onOpenFormatSettings && (
+                <button
+                  type="button"
+                  onClick={onOpenFormatSettings}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                  title="Customize station report formats and layout"
+                >
+                  <Sliders className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Report Formats</span>
+                </button>
+              )}
 
               <button
                 type="button"

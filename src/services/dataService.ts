@@ -18,6 +18,8 @@ import {
   DEFAULT_INITIAL_PUMPS_TEMPLATE,
   DischargeReport,
   PriceChangeReport,
+  ReportFormatSettings,
+  DEFAULT_REPORT_FORMAT_SETTINGS,
 } from '../types/report';
 import { recalculateReport } from '../utils/calculations';
 import { getSupabaseClient } from './supabaseClient';
@@ -25,21 +27,29 @@ import { getSupabaseClient } from './supabaseClient';
 const AUTH_USER_STORAGE_KEY = 'omc_active_user';
 const AUTH_SESSION_KEY = 'omc_auth_session';
 
-// Demo initial users available for immediate multi-user isolation verification
+// Demo initial users representing filling stations and retail forecourts worldwide
 export const DEMO_USERS: UserProfile[] = [
   {
     id: 'user_station_manager_01',
     email: 'manager.asesewa@station.com',
-    fullName: 'Station Manager (Oborpah Asesewa)',
-    stationName: 'OBORPAH ASESEWA',
+    fullName: 'Station Manager (Asesewa Highway Forecourt)',
+    stationName: 'OBORPAH ASESEWA FORECOURT',
     role: 'Station Manager',
     rememberMe: true,
   },
   {
     id: 'user_abena_02',
-    email: 'abena.boateng@onyxmaenergy.com',
-    fullName: 'Abena Boateng (Tema Station)',
-    stationName: 'TEMA INDUSTRIAL HIGHWAY',
+    email: 'abena.boateng@globalfuelops.com',
+    fullName: 'Abena Boateng (Port Retail Terminal)',
+    stationName: 'TEMA INDUSTRIAL FORECOURT',
+    role: 'Station Manager',
+    rememberMe: true,
+  },
+  {
+    id: 'user_carlos_03',
+    email: 'carlos.m@metrofuelstation.com',
+    fullName: 'Carlos Mendoza (Metro Central Kiosk)',
+    stationName: 'METRO EXPRESS STATION #14',
     role: 'Station Manager',
     rememberMe: true,
   },
@@ -868,5 +878,177 @@ export function deletePriceChangeReport(userId: string, reportId: string): void 
   const reports = getPriceChangeReports(userId);
   const filtered = reports.filter((r) => r.id !== reportId);
   localStorage.setItem(userKey(userId, 'price_change_reports'), JSON.stringify(filtered));
+}
+
+// ----------------------------------------------------------------------
+// REPORT FORMAT SETTINGS (PER-MANAGER CUSTOMIZATION)
+// ----------------------------------------------------------------------
+
+export const REPORT_FORMAT_PRESETS: Record<string, Partial<ReportFormatSettings>> = {
+  oborpah_default: {
+    presetId: 'oborpah_default',
+    stationHeaderCase: 'uppercase',
+    dateFormat: 'DD/MM/YYYY',
+    includeLocation: false,
+    includeTimestamp: false,
+    headerCustomNote: '',
+    footerCustomNote: '',
+    currencySymbol: '¢',
+    volumeUnit: '',
+    pumpSeparator: '=',
+    pumpDecimals: 2,
+    showOpeningMetersInDaily: false,
+    showIndividualPumpSold: false,
+    showTotalLitresSoldLine: true,
+    showProductSalesGhs: true,
+    showPhysicalStock: true,
+    showUnitPrice: true,
+    showVariance: true,
+    varianceLabel: 'Variance',
+    cashAccountTitle: 'CASH ACCOUNT',
+    totalSalesLabel: 'TOTAL- SALES',
+    expensesStyle: 'itemized',
+    cashToBankLabel: 'CASH TO BANK(or IN TILL)',
+    showHubtelSection: true,
+    showAnalogueSection: true,
+    dischargeIncludeTruckDriver: true,
+    dischargeBeforeTitle: 'BEFORE DISCHARGE',
+    dischargeAfterTitle: 'AFTER DISCHARGE',
+    dischargeOverageLabel: 'OVERAGE',
+    dischargeShortageLabel: 'SHORTAGE',
+    priceChangeTitle: 'PRICE CHANGE REPORT',
+    showStockRevaluationGhs: true,
+  },
+  omc_standard: {
+    presetId: 'omc_standard',
+    stationHeaderCase: 'titlecase',
+    dateFormat: 'DD/MM/YYYY',
+    includeLocation: true,
+    includeTimestamp: true,
+    headerCustomNote: '',
+    footerCustomNote: 'Audited & Confirmed by Station Manager.',
+    currencySymbol: 'GH¢',
+    volumeUnit: 'L',
+    pumpSeparator: ' = ',
+    pumpDecimals: 2,
+    showOpeningMetersInDaily: false,
+    showIndividualPumpSold: true,
+    showTotalLitresSoldLine: true,
+    showProductSalesGhs: true,
+    showPhysicalStock: true,
+    showUnitPrice: true,
+    showVariance: true,
+    varianceLabel: 'Stock Variance',
+    cashAccountTitle: 'FINANCIAL SUMMARY & CASH TILL',
+    totalSalesLabel: 'TOTAL GROSS SALES',
+    expensesStyle: 'itemized',
+    cashToBankLabel: 'CASH TO BANK',
+    showHubtelSection: true,
+    showAnalogueSection: true,
+    dischargeIncludeTruckDriver: true,
+    dischargeBeforeTitle: 'BEFORE FUEL DISCHARGE',
+    dischargeAfterTitle: 'AFTER FUEL DISCHARGE',
+    dischargeOverageLabel: 'OVERAGE GAIN',
+    dischargeShortageLabel: 'SHORTAGE LOSS',
+    priceChangeTitle: 'PRICE CHANGE REVALUATION REPORT',
+    showStockRevaluationGhs: true,
+  },
+  compact: {
+    presetId: 'compact',
+    stationHeaderCase: 'uppercase',
+    dateFormat: 'DD/MM/YYYY',
+    includeLocation: false,
+    includeTimestamp: false,
+    headerCustomNote: '',
+    footerCustomNote: '',
+    currencySymbol: '¢',
+    volumeUnit: '',
+    pumpSeparator: '=',
+    pumpDecimals: 2,
+    showOpeningMetersInDaily: false,
+    showIndividualPumpSold: false,
+    showTotalLitresSoldLine: false,
+    showProductSalesGhs: true,
+    showPhysicalStock: true,
+    showUnitPrice: true,
+    showVariance: true,
+    varianceLabel: 'Var',
+    cashAccountTitle: 'CASH TILL',
+    totalSalesLabel: 'SALES',
+    expensesStyle: 'total_only',
+    cashToBankLabel: 'CASH IN TILL',
+    showHubtelSection: false,
+    showAnalogueSection: false,
+    dischargeIncludeTruckDriver: false,
+    dischargeBeforeTitle: 'BEFORE DISCHARGE',
+    dischargeAfterTitle: 'AFTER DISCHARGE',
+    dischargeOverageLabel: 'OVERAGE',
+    dischargeShortageLabel: 'SHORTAGE',
+    priceChangeTitle: 'PRICE CHANGE',
+    showStockRevaluationGhs: true,
+  },
+  detailed_audit: {
+    presetId: 'detailed_audit',
+    stationHeaderCase: 'uppercase',
+    dateFormat: 'DD/MM/YYYY',
+    includeLocation: true,
+    includeTimestamp: true,
+    headerCustomNote: 'CONFIDENTIAL DAILY AUDIT DISPATCH',
+    footerCustomNote: 'Certified accurate. Subject to head-office audit.',
+    currencySymbol: 'GH¢',
+    volumeUnit: 'Litres',
+    pumpSeparator: ' : ',
+    pumpDecimals: 2,
+    showOpeningMetersInDaily: true,
+    showIndividualPumpSold: true,
+    showTotalLitresSoldLine: true,
+    showProductSalesGhs: true,
+    showPhysicalStock: true,
+    showUnitPrice: true,
+    showVariance: true,
+    varianceLabel: 'Dipping Variance',
+    cashAccountTitle: 'DAILY CASH & SALES RECONCILIATION',
+    totalSalesLabel: 'GROSS PRODUCT SALES',
+    expensesStyle: 'itemized',
+    cashToBankLabel: 'NET CASH FOR BANKING',
+    showHubtelSection: true,
+    showAnalogueSection: true,
+    dischargeIncludeTruckDriver: true,
+    dischargeBeforeTitle: 'STAGE 1: BEFORE DISCHARGE',
+    dischargeAfterTitle: 'STAGE 2: AFTER DISCHARGE',
+    dischargeOverageLabel: 'PRODUCT OVERAGE (+)',
+    dischargeShortageLabel: 'PRODUCT SHORTAGE (-)',
+    priceChangeTitle: 'STATION PRICE CUTOVER & STOCK REVALUATION',
+    showStockRevaluationGhs: true,
+  },
+};
+
+export function getReportFormatSettings(userId: string): ReportFormatSettings {
+  const key = userKey(userId, 'report_format_settings');
+  const stored = localStorage.getItem(key);
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored);
+      return { ...DEFAULT_REPORT_FORMAT_SETTINGS, ...parsed };
+    } catch (e) {
+      console.warn('Failed to parse report format settings, using defaults:', e);
+    }
+  }
+  return { ...DEFAULT_REPORT_FORMAT_SETTINGS };
+}
+
+export function saveReportFormatSettings(
+  userId: string,
+  settings: ReportFormatSettings
+): ReportFormatSettings {
+  const key = userKey(userId, 'report_format_settings');
+  localStorage.setItem(key, JSON.stringify(settings));
+  return settings;
+}
+
+export function resetReportFormatSettings(userId: string): ReportFormatSettings {
+  const key = userKey(userId, 'report_format_settings');
+  localStorage.removeItem(key);
+  return { ...DEFAULT_REPORT_FORMAT_SETTINGS };
 }
 
