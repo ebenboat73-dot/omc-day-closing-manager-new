@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { DailyReport, ReportStatus, UserProfile, StationWorkspace } from '../../types/report';
-import { Calendar, History, Sliders, CheckCircle2, AlertCircle, Send, Save, Building, User, RefreshCw, CloudCheck } from 'lucide-react';
+import { Calendar, History, Sliders, CheckCircle2, AlertCircle, Send, Save, Building, User, RefreshCw, CloudCheck, LogOut } from 'lucide-react';
 
 interface ReportHeaderProps {
   report: DailyReport;
@@ -16,6 +16,7 @@ interface ReportHeaderProps {
   onOpenPumpSetup: () => void;
   onOpenAccount: () => void;
   onOpenReview: () => void;
+  onSignOut?: () => void;
   isAutoSaving?: boolean;
 }
 
@@ -36,6 +37,7 @@ export const ReportHeader: React.FC<ReportHeaderProps> = ({
   onOpenPumpSetup,
   onOpenAccount,
   onOpenReview,
+  onSignOut,
   isAutoSaving = false,
 }) => {
   const statusStyle = STATUS_COLORS[report.status] || STATUS_COLORS.Draft;
@@ -173,6 +175,18 @@ export const ReportHeader: React.FC<ReportHeaderProps> = ({
                 <Building className="w-3.5 h-3.5 text-slate-400" />
                 <span>Account</span>
               </button>
+
+              {onSignOut && (
+                <button
+                  type="button"
+                  onClick={onSignOut}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-rose-950/40 hover:text-rose-300 border border-slate-700 text-slate-400 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                  title="Sign out of station"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Sign Out</span>
+                </button>
+              )}
 
               <button
                 type="button"

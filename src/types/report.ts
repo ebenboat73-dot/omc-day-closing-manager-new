@@ -8,7 +8,9 @@ export interface UserProfile {
   id: string;
   email: string;
   fullName: string;
+  stationName?: string;
   role?: string;
+  rememberMe?: boolean;
   createdAt?: string;
 }
 
@@ -110,6 +112,68 @@ export interface HubtelDetails {
   hubtelAccount: string;
   dashboardAmount: number | null;
   bankingWithHubtel: number | null;
+}
+
+export interface DischargePumpMeter {
+  pumpLabel: string;
+  meter: number;
+}
+
+export interface DischargeReport {
+  id: string;
+  workspaceId: string;
+  stationName: string;
+  productCode: string; // 'AGO', 'PMS', etc.
+  date: string; // e.g. '10/10/2026'
+  truckNumber?: string;
+  driverName?: string;
+  waybillNumber?: string;
+  
+  // Before discharge
+  beforeTime: string; // e.g. '2:30PM'
+  stockUndergroundBefore: number; // e.g. 3820
+  invoiceQuantity: number; // e.g. 18000
+  expectedStock: number; // 3820 + 18000 = 21820
+  openingMeters: DischargePumpMeter[];
+  totalOpeningMeters: number;
+
+  // After discharge
+  afterTime?: string; // e.g. '3:33 PM'
+  stockAfterDischarge?: number | null; // e.g. 21880
+  litresSoldDuringDischarge: number; // e.g. 0
+  theoreticalStock?: number | null; // expectedStock - litresSoldDuringDischarge = 21820
+  overageOrShortage?: number | null; // stockAfterDischarge - theoreticalStock = +60
+  closingMeters: DischargePumpMeter[];
+  totalClosingMeters: number;
+  notes?: string;
+  status: 'Before Discharge' | 'Completed';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PriceChangePumpReading {
+  pumpLabel: string;
+  closingMeter: number;
+  litresSold: number;
+}
+
+export interface PriceChangeReport {
+  id: string;
+  workspaceId: string;
+  stationName: string;
+  productCode: string;
+  date: string; // e.g. '14/10/2026'
+  effectiveTime: string; // e.g. '11:59PM'
+  oldPrice: number; // e.g. 16.59
+  newPrice: number; // e.g. 17.20
+  priceDifference: number; // newPrice - oldPrice
+  meterReadingsAtChange: PriceChangePumpReading[];
+  totalLitresSoldAtOldPrice: number;
+  physicalStockAtChange: number;
+  stockGainOrLossValueGhs: number; // physicalStockAtChange * priceDifference
+  status: 'Draft' | 'Sent';
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type ReportStatus = 'Draft' | 'In Progress' | 'Ready for Review' | 'Ready to Send' | 'Sent';

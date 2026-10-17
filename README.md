@@ -1,84 +1,86 @@
 # OMC Manager Day Sales & Stock Reporting App
 
-**Version 3.1 • October 2026 • Onyxma Energy**  
+**Version 3.2 • Retail Service Station Edition • Onyxma Energy**  
 Mobile-first multi-user web application built with React 19, TypeScript, Tailwind CSS, Supabase, and Vercel readiness.
 
 ---
 
 ## 🎯 Purpose & Core Principles
 
-The OMC Manager Day Sales & Stock Reporting App provides a fast, reliable, phone-first workflow for fuel station managers to:
-- Record pump totalizer meter readings with in-app camera capture.
-- Verify readings with optional optical character recognition (OCR) suggestions while ensuring manager-confirmed figures are authoritative.
-- Reconcile physical tank dipping against opening stock, deliveries, and day sales.
-- Itemize daily operational expenses in GHS.
-- Generate, verify, and broadcast standardized daily reports via WhatsApp, SMS, or Telegram.
+The OMC Manager Day Sales & Stock Reporting App provides a fast, reliable, phone-first workflow for retail fuel station managers across Ghana to:
+- Welcome visitors with an executive **OMC Landing Page** highlighting operational benefits.
+- Provide secure **Sign In & Registration** with a **"Stay logged in on this device"** preference for fast daily access.
+- Record pump totalizer meter readings with in-app camera capture and editable unit prices.
+- Photograph dipsticks with in-app **Dipping Camera** and reconcile physical tank dipping.
+- Conduct **Fuel Discharge Reports** (Before & After discharge, stock underground, invoice volume, expected stock, opening/closing meters, and overage/shortage accounting).
+- Manage **Price Change Reports** (cutover meter readings, litres sold at old price, and stock gain/loss revaluation in GHS).
+- Itemize daily operational expenses and compute exact Cash in Till.
+- Generate, verify, and broadcast standardized executive daily reports via WhatsApp or SMS in 1 tap.
 
-### Core Product Principles (PRD v3.1)
-1. **Private-by-Default Workspaces**: User A can access User A's workspace only; User B can access User B's workspace only. Workspaces, reports, settings, and photos are strictly isolated.
-2. **Authoritative Manager Readings**: OCR output is an unconfirmed suggestion. The station manager's confirmed value is authoritative.
-3. **Dynamic Pump & Product Setup**: Station managers can add nozzles, edit labels, reorder positions, and deactivate pumps without a code change.
-4. **Historical Snapshot Preservation**: Each daily report preserves a freeze snapshot of the pump label and product configuration applicable on that date. Future pump renames or deactivations never rewrite history.
-5. **No Blind Zeroes**: Missing readings remain explicitly incomplete (`null`), triggering clear warnings rather than silently defaulting to zero.
-6. **In-App Camera & Photo Retention**: Direct MediaDevices live camera stream with viewfinder overlay, retake, pump association, and device-supported save to Gallery/Photos.
+### Core Product Principles
+1. **Private-by-Default Workspaces**: Each manager has their own private station workspace with strictly isolated data.
+2. **Authoritative Manager Readings**: OCR output is an unconfirmed suggestion; the station manager's confirmed value is authoritative.
+3. **Flexible & Removable Pumps**: Station managers can add, reorder, edit, or remove nozzles directly from the report or Pump Setup.
+4. **Editable Unit Prices & Real-Time Revenue**: Real-time sales per pump and product based on station unit prices (e.g., PMS @ ¢16.59, AGO @ ¢18.39).
+5. **Dedicated Delivery & Price Shift Workflows**: Specialized Before/After discharge and price cutover tracking with exact executive WhatsApp format.
+6. **In-App Camera at Pumps & Dipstick**: Direct MediaDevices live camera stream with viewfinder overlay, retake, pump association, and device-supported save to Gallery/Photos.
 
 ---
 
 ## 🏗 Technology Architecture
 
-- **Frontend**: React 19 + TypeScript + Vite 6+
-- **Styling**: Tailwind CSS v4 (Restrained, professional palette: deep navy `#0f172a`, amber accent, clean status indicators)
+- **Frontend**: React 19 + TypeScript + Vite 8+
+- **Styling**: Tailwind CSS v4 (Deep slate `#020617` palette with high-contrast amber `#f59e0b`, emerald `#10b981`, and cyan `#06b6d4` badges)
 - **Database & Auth**: Supabase (PostgreSQL with Row Level Security, Auth, and private Storage buckets)
-- **Offline / Local Fallback**: Client-side scoped user storage engine (`omc_u_${userId}_...`) enabling instant multi-user isolation testing (e.g. Kwame Ansah vs Abena Boateng) even before entering Supabase credentials
-- **OCR Engine**: Tesseract.js (client-side optical character recognition)
+- **Offline / Local Fallback**: Client-side scoped user storage engine (`omc_u_${userId}_...`) enabling instant multi-user isolation testing (e.g. Oborpah Asesewa vs Tema Highway)
 - **Camera API**: `navigator.mediaDevices.getUserMedia` with rear-camera (`facingMode: environment`) viewfinder and device file picker fallback
-- **Export & Sharing**: Native Web Share API (`navigator.share`), WhatsApp/Telegram direct share URLs, printable layout, and clipboard copy
+- **Export & Sharing**: WhatsApp direct share URLs, native Web Share API, printable layout, and clipboard copy
 
 ---
 
-## 🚀 Key Features & Workflow
+## 🚀 Key Workflows
 
-### 1. In-App Camera Capture & Gallery Save
-- Tap the **Camera** icon on any pump card to launch the live viewfinder.
-- High-contrast overlay guides alignment of meter digits.
-- Snap photo, retake if blurry, or click **Save to Gallery** (invoking the native share sheet / download to save to device Photos).
-- Automated OCR suggestions with confidence ratings and 1-click application.
+### 1. Landing Homepage & Authentication
+- Explains how the platform eliminates manual math slips, accelerates evening closing under 3 minutes, and formats instant executive WhatsApp messages.
+- Sign In & Station Registration with **"Stay logged in on this device"** checkbox.
+- 1-Click quick demo access as Station Manager (Oborpah Asesewa) or Tema Station Manager.
 
-### 2. Dynamic Pump Configuration
-- Navigate to the **Pump Setup** tab.
-- View configured nozzles grouped by fuel type (Default initial sequence: PMS1–4, AGO1–6, KERO1–2).
-- Add new pumps (e.g., `AGO 7`), reorder nozzles up/down, and toggle active/deactivated.
-- Deactivating preserves historical reports while removing the pump from new daily drafts.
+### 2. Daily Sales & Meter Readings
+- Dynamic pump cards (S1–S4 for PMS, D1–D4 for AGO, or custom configurations).
+- Removable pumps with instant confirmation.
+- Editable unit prices (default: PMS @ ¢16.59, AGO @ ¢18.39).
+- Total sales per pump (L and GHS) and total revenue per product.
+- Mechanical / Analogue totalizer reading inputs (e.g. S3-483179, D1-232567).
 
-### 3. Tank Stock & Dipping Reconciliation
-- Formula:
-  $$\text{Theoretical Closing Stock} = \text{Opening Stock} + \text{Receipts} - \text{Day Sales}$$
-  $$\text{Variance} = \text{Physical Closing Stock} - \text{Theoretical Closing Stock}$$
-- Immediate auto-recalculation upon input.
-- Dipping stick height (mm) recording and high-variance alerts (> ±150L).
+### 3. Stock Dipping & Dipping Camera
+- Camera capture directly at the tank dipstick.
+- Physical dipping vs Theoretical Stock with instant color-coded variance.
+- Total fuel revenue minus expenses = Cash in Till.
+- Hubtel digital banking reconciliation.
 
-### 4. Operational Expenses
-- Itemize station cash disbursements before shift close (Staff meals, ECG prepaid power recharge, generator fuel, maintenance, transport).
-- Kept editable and totaled in GHS; never subtracted from fuel sales without separate netting.
+### 4. Fuel Discharge Reports
+- **Before Discharge**: Stock Underground + Invoice Quantity = Expected Stock, plus Opening Meters for discharge pumps.
+- **After Discharge**: Physical Stock After Discharge, Litres Sold During Discharge, Theoretical Stock, and calculated **Overage / Shortage** (e.g. `+60 L OVERAGE`), plus Closing Meters.
+- Real-time formatted executive WhatsApp text ready to copy or share.
 
-### 5. Multi-User Workspace Testing & Supabase Setup
-- Tap **Account** or the Manager Name in the header.
-- Switch between demo managers (**Kwame Ansah** at Airport Bypass Station vs **Abena Boateng** at Tema Industrial Highway) to verify strict data isolation.
-- Connect your Supabase project with Project URL and publishable Anon key.
-- 1-click **Copy SQL Schema** with complete DDL, foreign keys, and Row Level Security (RLS) policies for Supabase SQL Editor.
+### 5. Price Change Reports
+- Effective cutover date & time (e.g. 11:59PM).
+- Old Price -> New Price -> Price Difference.
+- Pump meters at cutover and litres sold at old price.
+- Physical tank stock and total **Stock Gain or Loss Value** in GHS.
 
 ---
 
-## 💻 Development & Deployment
+## 💻 Running Locally
 
 ```bash
 # Install dependencies
 npm install
 
-# Start dev server on port 3000
+# Start development server on port 3000
 npm run dev
 
-# Run TypeScript checks
+# Run TypeScript and linter checks
 npm run lint
 
 # Build for production
@@ -89,4 +91,4 @@ npm run build
 
 ## 🔐 Supabase Row Level Security (RLS)
 
-All database tables (`profiles`, `workspaces`, `products`, `pumps`, `reports`, `report_pump_readings`, `report_stock_entries`, `report_expenses`, `audit_events`) enforce RLS policies verifying `auth.uid() = owner_user_id`. The full schema is viewable inside the application under **Account Settings → SQL & RLS Schema** or in `src/services/supabaseSchema.sql`.
+All database tables enforce RLS policies verifying `auth.uid() = owner_user_id`. The full schema is viewable inside the application under **Account Settings → SQL & RLS Schema** or in `src/services/supabaseSchema.sql`.

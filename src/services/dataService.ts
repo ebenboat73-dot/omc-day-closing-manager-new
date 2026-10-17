@@ -16,61 +16,151 @@ import {
   ReportIndexEntry,
   DEFAULT_INITIAL_PRODUCTS,
   DEFAULT_INITIAL_PUMPS_TEMPLATE,
+  DischargeReport,
+  PriceChangeReport,
 } from '../types/report';
 import { recalculateReport } from '../utils/calculations';
 import { getSupabaseClient } from './supabaseClient';
 
 const AUTH_USER_STORAGE_KEY = 'omc_active_user';
+const AUTH_SESSION_KEY = 'omc_auth_session';
 
 // Demo initial users available for immediate multi-user isolation verification
-const DEMO_USERS: UserProfile[] = [
+export const DEMO_USERS: UserProfile[] = [
   {
     id: 'user_station_manager_01',
     email: 'manager.asesewa@station.com',
     fullName: 'Station Manager (Oborpah Asesewa)',
+    stationName: 'OBORPAH ASESEWA',
     role: 'Station Manager',
+    rememberMe: true,
   },
   {
     id: 'user_abena_02',
     email: 'abena.boateng@onyxmaenergy.com',
     fullName: 'Abena Boateng (Tema Station)',
+    stationName: 'TEMA INDUSTRIAL HIGHWAY',
     role: 'Station Manager',
+    rememberMe: true,
   },
 ];
 
-// Helper to get active user
-export function getActiveUser(): UserProfile {
+/**
+ * Checks if a user is currently authenticated in this browser session.
+ * Returns null if user is logged out or visiting for the first time without a persistent session.
+ */
+export function getCurrentSessionUser(): UserProfile | null {
   try {
-    const raw = localStorage.getItem(AUTH_USER_STORAGE_KEY);
-    if (raw) {
-      return JSON.parse(raw);
+    // 1. Check temporary session storage first
+    const sessionRaw = sessionStorage.getItem(AUTH_SESSION_KEY);
+    if (sessionRaw) {
+      return JSON.parse(sessionRaw);
+    }
+
+    // 2. Check persistent localStorage if user opted to 'stay logged in on device'
+    const persistentRaw = localStorage.getItem(AUTH_USER_STORAGE_KEY);
+    if (persistentRaw) {
+      const parsed = JSON.parse(persistentRaw);
+      // Ensure rememberMe was true
+      if (parsed && parsed.id) {
+        return parsed;
+      }
     }
   } catch (e) {
-    console.warn('Failed to parse active user:', e);
+    console.warn('Failed to parse active user session:', e);
   }
+  return null;
+}
+
+// Helper to get active user (with fallback)
+export function getActiveUser(): UserProfile {
+  const current = getCurrentSessionUser();
+  if (current) return current;
+
+  // Default fallback user for backwards compatibility
   const defaultUser = DEMO_USERS[0];
-  setActiveUser(defaultUser);
   return defaultUser;
 }
 
-export function setActiveUser(user: UserProfile) {
-  localStorage.setItem(AUTH_USER_STORAGE_KEY, JSON.stringify(user));
+export function setActiveUser(user: UserProfile, rememberMe = true) {
+  const userWithFlag: UserProfile = { ...user, rememberMe };
+  if (rememberMe) {
+    localStorage.setItem(AUTH_USER_STORAGE_KEY, JSON.stringify(userWithFlag));
+  } else {
+    localStorage.removeItem(AUTH_USER_STORAGE_KEY);
+  }
+  sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(userWithFlag));
 }
 
-export function listAvailableDemoUsers(): UserProfile[] {
-  return DEMO_USERS;
+export function loginUser(email: string, rememberMe = true): UserProfile {
+  const trimmedEmail = email.trim().toLowerCase();
+  const matched = DEMO_USERS.find((u) => u.email.toLowerCase() === trimmedEmail);
+  
+  if (matched) {
+    setActiveUser(matched, rememberMe);
+    return matched;
+  }
+
+  // Create new or retrieve existing local profile for this email
+  const existingKey = `omc_profile_${trimmedEmail}`;
+  const existingProfileRaw = localStorage.getItem(existingKey);
+  if (existingProfileRaw) {
+    try {
+      const parsed = JSON.parse(existingProfileRaw);
+      setActiveUser(parsed, rememberMe);
+      return parsed;
+    } catch {
+      // fallback to new profile
+    }
+  }
+
+  const newUser: UserProfile = {
+    id: `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    email: trimmedEmail,
+    fullName: email.split('@')[0].replace(/[._]/g, ' ').toUpperCase(),
+    stationName: 'ONYXMA RETAIL STATION',
+    role: 'Station Manager',
+    rememberMe,
+    createdAt: new Date().toISOString(),
+  };
+
+  localStorage.setItem(existingKey, JSON.stringify(newUser));
+  setActiveUser(newUser, rememberMe);
+  return newUser;
 }
 
-export function registerNewUser(email: string, fullName: string): UserProfile {
+export function registerNewUser(
+  email: string,
+  fullName: string,
+  stationName = 'OBORPAH ASESEWA',
+  rememberMe = true
+): UserProfile {
   const newUser: UserProfile = {
     id: `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     email: email.trim(),
     fullName: fullName.trim() || 'Station Manager',
+    stationName: stationName.trim() || 'OBORPAH ASESEWA',
     role: 'Station Manager',
+    rememberMe,
     createdAt: new Date().toISOString(),
   };
-  setActiveUser(newUser);
+
+  localStorage.setItem(`omc_profile_${newUser.email.toLowerCase()}`, JSON.stringify(newUser));
+  setActiveUser(newUser, rememberMe);
+
+  // Initialize workspace with customized station name
+  getOrCreateWorkspace(newUser.id, newUser.stationName, newUser.fullName);
+
   return newUser;
+}
+
+export function logoutUser() {
+  localStorage.removeItem(AUTH_USER_STORAGE_KEY);
+  sessionStorage.removeItem(AUTH_SESSION_KEY);
+}
+
+export function listAvailableDemoUsers(): UserProfile[] {
+  return DEMO_USERS;
 }
 
 // Scoped storage keys for strict private isolation per user ID
@@ -82,19 +172,30 @@ function userKey(userId: string, suffix: string): string {
 // WORKSPACE MANAGEMENT
 // ----------------------------------------------------------------------
 
-export function getOrCreateWorkspace(userId: string): StationWorkspace {
+export function getOrCreateWorkspace(
+  userId: string,
+  customStationName?: string,
+  customManagerName?: string
+): StationWorkspace {
   const key = userKey(userId, 'workspace');
   const existing = localStorage.getItem(key);
   if (existing) {
     try {
-      return JSON.parse(existing);
+      const parsed = JSON.parse(existing);
+      if (customStationName && (!parsed.stationName || parsed.stationName === 'ONYXMA RETAIL STATION')) {
+        parsed.stationName = customStationName;
+        localStorage.setItem(key, JSON.stringify(parsed));
+      }
+      return parsed;
     } catch (e) {
       console.warn('Failed to parse workspace:', e);
     }
   }
 
-  // Station name configured for Oborpah Asesewa
-  const stationName = userId === 'user_station_manager_01'
+  // Station name configured for Oborpah Asesewa or custom
+  const stationName = customStationName
+    ? customStationName
+    : userId === 'user_station_manager_01'
     ? 'OBORPAH ASESEWA'
     : userId === 'user_abena_02'
     ? 'TEMA INDUSTRIAL HIGHWAY'
@@ -106,7 +207,7 @@ export function getOrCreateWorkspace(userId: string): StationWorkspace {
     stationName,
     stationLocation: 'Asesewa, Eastern Region, Ghana',
     omcBrand: 'Onyxma Energy',
-    managerName: getActiveUser().fullName,
+    managerName: customManagerName || getActiveUser().fullName,
     currencySymbol: '¢',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -618,3 +719,154 @@ async function syncReportToSupabase(report: DailyReport) {
     console.warn('Supabase sync notice:', err);
   }
 }
+
+// ----------------------------------------------------------------------
+// DISCHARGE REPORTS PERSISTENCE & SEEDING
+// ----------------------------------------------------------------------
+
+export function getDischargeReports(userId: string): DischargeReport[] {
+  const key = userKey(userId, 'discharge_reports');
+  const raw = localStorage.getItem(key);
+  if (raw) {
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      console.warn('Failed to parse discharge reports:', e);
+    }
+  }
+
+  // Seed sample discharge report matching user's exact specification if empty
+  const sampleDischarge: DischargeReport = {
+    id: `disch_sample_${userId}`,
+    workspaceId: `ws_${userId}`,
+    stationName: 'OBORPAH ASESEWA',
+    productCode: 'AGO',
+    date: '10/10/2026',
+    truckNumber: 'GN-4921-22',
+    driverName: 'K. Mensah',
+    waybillNumber: 'WB-AGO-8819',
+    beforeTime: '2:30PM',
+    stockUndergroundBefore: 3820,
+    invoiceQuantity: 18000,
+    expectedStock: 21820,
+    openingMeters: [
+      { pumpLabel: 'S3', meter: 232341.57 },
+      { pumpLabel: 'D2', meter: 424577.35 },
+    ],
+    totalOpeningMeters: 656918.92,
+    afterTime: '3:33 PM',
+    stockAfterDischarge: 21880,
+    litresSoldDuringDischarge: 0,
+    theoreticalStock: 21880,
+    overageOrShortage: 60,
+    closingMeters: [
+      { pumpLabel: 'D1', meter: 232341.57 },
+      { pumpLabel: 'D2', meter: 424577.35 },
+    ],
+    totalClosingMeters: 656918.92,
+    status: 'Completed',
+    notes: 'Clean discharge. Density 0.835 at 28°C. Seals intact on arrival.',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  localStorage.setItem(key, JSON.stringify([sampleDischarge]));
+  return [sampleDischarge];
+}
+
+export function saveDischargeReport(userId: string, report: DischargeReport): DischargeReport {
+  const reports = getDischargeReports(userId);
+  const existingIdx = reports.findIndex((r) => r.id === report.id);
+  const updated: DischargeReport = {
+    ...report,
+    updatedAt: new Date().toISOString(),
+  };
+
+  let newReports: DischargeReport[];
+  if (existingIdx >= 0) {
+    newReports = [...reports];
+    newReports[existingIdx] = updated;
+  } else {
+    newReports = [updated, ...reports];
+  }
+
+  localStorage.setItem(userKey(userId, 'discharge_reports'), JSON.stringify(newReports));
+  return updated;
+}
+
+export function deleteDischargeReport(userId: string, reportId: string): void {
+  const reports = getDischargeReports(userId);
+  const filtered = reports.filter((r) => r.id !== reportId);
+  localStorage.setItem(userKey(userId, 'discharge_reports'), JSON.stringify(filtered));
+}
+
+// ----------------------------------------------------------------------
+// PRICE CHANGE REPORTS PERSISTENCE & SEEDING
+// ----------------------------------------------------------------------
+
+export function getPriceChangeReports(userId: string): PriceChangeReport[] {
+  const key = userKey(userId, 'price_change_reports');
+  const raw = localStorage.getItem(key);
+  if (raw) {
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      console.warn('Failed to parse price change reports:', e);
+    }
+  }
+
+  // Seed sample price change report
+  const samplePriceChange: PriceChangeReport = {
+    id: `pc_sample_${userId}`,
+    workspaceId: `ws_${userId}`,
+    stationName: 'OBORPAH ASESEWA',
+    productCode: 'PMS',
+    date: '15/10/2026',
+    effectiveTime: '11:59PM',
+    oldPrice: 16.59,
+    newPrice: 17.20,
+    priceDifference: 0.61,
+    meterReadingsAtChange: [
+      { pumpLabel: 'S1', closingMeter: 25332.02, litresSold: 342.49 },
+      { pumpLabel: 'S2', closingMeter: 40470.79, litresSold: 280.12 },
+      { pumpLabel: 'S3', closingMeter: 61632.08, litresSold: 310.50 },
+      { pumpLabel: 'S4', closingMeter: 58649.49, litresSold: 295.80 },
+    ],
+    totalLitresSoldAtOldPrice: 1228.91,
+    physicalStockAtChange: 12710,
+    stockGainOrLossValueGhs: 7753.10,
+    status: 'Sent',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  localStorage.setItem(key, JSON.stringify([samplePriceChange]));
+  return [samplePriceChange];
+}
+
+export function savePriceChangeReport(userId: string, report: PriceChangeReport): PriceChangeReport {
+  const reports = getPriceChangeReports(userId);
+  const existingIdx = reports.findIndex((r) => r.id === report.id);
+  const updated: PriceChangeReport = {
+    ...report,
+    updatedAt: new Date().toISOString(),
+  };
+
+  let newReports: PriceChangeReport[];
+  if (existingIdx >= 0) {
+    newReports = [...reports];
+    newReports[existingIdx] = updated;
+  } else {
+    newReports = [updated, ...reports];
+  }
+
+  localStorage.setItem(userKey(userId, 'price_change_reports'), JSON.stringify(newReports));
+  return updated;
+}
+
+export function deletePriceChangeReport(userId: string, reportId: string): void {
+  const reports = getPriceChangeReports(userId);
+  const filtered = reports.filter((r) => r.id !== reportId);
+  localStorage.setItem(userKey(userId, 'price_change_reports'), JSON.stringify(filtered));
+}
+

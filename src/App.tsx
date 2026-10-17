@@ -16,8 +16,11 @@ import {
   ConfiguredProduct,
   ConfiguredPump,
   HubtelDetails,
+  DischargeReport,
+  PriceChangeReport,
 } from './types/report';
 import {
+  getCurrentSessionUser,
   getActiveUser,
   getOrCreateWorkspace,
   getWorkspaceProducts,
@@ -27,6 +30,13 @@ import {
   seedDemoWorkspacesIfEmpty,
   deletePump,
   updateProductPrice,
+  getDischargeReports,
+  saveDischargeReport,
+  deleteDischargeReport,
+  getPriceChangeReports,
+  savePriceChangeReport,
+  deletePriceChangeReport,
+  logoutUser,
 } from './services/dataService';
 import { recalculateReport } from './utils/calculations';
 import { ReportHeader } from './features/reports/ReportHeader';
@@ -40,25 +50,43 @@ import { BulkUploadModal } from './features/meters/BulkUploadModal';
 import { SendReportModal } from './features/sharing/SendReportModal';
 import { ReportHistoryModal } from './features/reports/ReportHistoryModal';
 import { PhotoPreviewModal } from './features/meters/PhotoPreviewModal';
-import { Fuel, Layers, Receipt, Sliders, Send, Camera, ShieldCheck, ChevronRight, Moon, Sun, Clock } from 'lucide-react';
+import { LandingHomePage } from './features/auth/LandingHomePage';
+import { DischargeReportSection } from './features/discharge/DischargeReportSection';
+import { PriceChangeSection } from './features/pricechange/PriceChangeSection';
+import {
+  Fuel,
+  Layers,
+  Receipt,
+  Sliders,
+  Send,
+  Truck,
+  DollarSign,
+  Camera,
+  ShieldCheck,
+  ChevronRight,
+  LogOut,
+  Sparkles,
+} from 'lucide-react';
 
 export default function App() {
-  // Current user & isolated workspace state
-  const [currentUser, setCurrentUser] = useState<UserProfile>(() => getActiveUser());
-  const [workspace, setWorkspace] = useState<StationWorkspace>(() => getOrCreateWorkspace(getActiveUser().id));
+  // Current authenticated user session (null when visiting landing homepage)
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => getCurrentSessionUser());
+  const [workspace, setWorkspace] = useState<StationWorkspace | null>(null);
   const [products, setProducts] = useState<ConfiguredProduct[]>([]);
   const [pumps, setPumps] = useState<ConfiguredPump[]>([]);
 
-  // Selected date (defaults to today's date: 2026-10-14)
-  const [selectedDate, setSelectedDate] = useState<string>(() => {
-    return '2026-10-14';
-  });
+  // Selected date for daily report (defaults to 2026-10-14)
+  const [selectedDate, setSelectedDate] = useState<string>('2026-10-14');
 
   const [report, setReport] = useState<DailyReport | null>(null);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
 
+  // Discharge & Price Change reports
+  const [dischargeReports, setDischargeReports] = useState<DischargeReport[]>([]);
+  const [priceChangeReports, setPriceChangeReports] = useState<PriceChangeReport[]>([]);
+
   // Active navigation tab
-  const [activeTab, setActiveTab] = useState<'meters' | 'stock' | 'expenses' | 'setup'>('meters');
+  const [activeTab, setActiveTab] = useState<'meters' | 'stock' | 'discharge' | 'pricechange' | 'expenses' | 'setup'>('meters');
 
   // Modals state
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
@@ -79,10 +107,15 @@ export default function App() {
     title: '',
   });
 
-  // Initialize and load report
-  const reloadWorkspaceAndData = useCallback(() => {
+  // Reload current workspace and data
+  const reloadWorkspaceAndData = useCallback((userParam?: UserProfile | null) => {
     seedDemoWorkspacesIfEmpty();
-    const user = getActiveUser();
+    const user = userParam || currentUser || getCurrentSessionUser();
+    if (!user) {
+      setCurrentUser(null);
+      return;
+    }
+
     setCurrentUser(user);
 
     const ws = getOrCreateWorkspace(user.id);
@@ -96,15 +129,24 @@ export default function App() {
 
     const loadedReport = getReportByDate(user.id, selectedDate);
     setReport(loadedReport);
-  }, [selectedDate]);
+
+    const dReports = getDischargeReports(user.id);
+    setDischargeReports(dReports);
+
+    const pcReports = getPriceChangeReports(user.id);
+    setPriceChangeReports(pcReports);
+  }, [currentUser, selectedDate]);
 
   useEffect(() => {
-    reloadWorkspaceAndData();
-  }, [reloadWorkspaceAndData]);
+    if (currentUser) {
+      reloadWorkspaceAndData(currentUser);
+    }
+  }, [currentUser, reloadWorkspaceAndData]);
 
   // Persist report with debounced status indication
   const persistReport = useCallback(
     (updated: DailyReport) => {
+      if (!currentUser) return updated;
       setIsAutoSaving(true);
       const saved = saveDailyReport(currentUser.id, updated);
       setTimeout(() => {
@@ -112,8 +154,21 @@ export default function App() {
       }, 400);
       return saved;
     },
-    [currentUser.id]
+    [currentUser]
   );
+
+  // Auth handler: Successful Login from Landing Page
+  const handleLoginSuccess = (user: UserProfile) => {
+    setCurrentUser(user);
+    reloadWorkspaceAndData(user);
+  };
+
+  // Auth handler: Sign out
+  const handleSignOut = () => {
+    logoutUser();
+    setCurrentUser(null);
+    setReport(null);
+  };
 
   // Update a single pump reading
   const handleUpdatePump = (readingId: string, updated: Partial<ReportPumpReading>) => {
@@ -134,7 +189,7 @@ export default function App() {
 
   // Remove / Delete a pump (User requirement: "available default pumps, some should be removable")
   const handleRemovePump = (readingId: string) => {
-    if (!report) return;
+    if (!report || !currentUser) return;
     const target = report.pumps.find((p) => p.id === readingId);
     if (!target) return;
 
@@ -161,7 +216,7 @@ export default function App() {
 
   // Update product unit price
   const handleUpdateUnitPrice = (productCode: string, newPrice: number) => {
-    if (!report) return;
+    if (!report || !currentUser) return;
 
     updateProductPrice(currentUser.id, productCode, newPrice);
     setProducts(getWorkspaceProducts(currentUser.id));
@@ -336,12 +391,44 @@ export default function App() {
     });
   };
 
-  if (!report) {
+  // Discharge reports handlers
+  const handleSaveDischarge = (dReport: DischargeReport) => {
+    if (!currentUser) return;
+    saveDischargeReport(currentUser.id, dReport);
+    setDischargeReports(getDischargeReports(currentUser.id));
+  };
+
+  const handleDeleteDischarge = (reportId: string) => {
+    if (!currentUser) return;
+    deleteDischargeReport(currentUser.id, reportId);
+    setDischargeReports(getDischargeReports(currentUser.id));
+  };
+
+  // Price change reports handlers
+  const handleSavePriceChange = (pcReport: PriceChangeReport) => {
+    if (!currentUser) return;
+    savePriceChangeReport(currentUser.id, pcReport);
+    setPriceChangeReports(getPriceChangeReports(currentUser.id));
+  };
+
+  const handleDeletePriceChange = (reportId: string) => {
+    if (!currentUser) return;
+    deletePriceChangeReport(currentUser.id, reportId);
+    setPriceChangeReports(getPriceChangeReports(currentUser.id));
+  };
+
+  // If user is not authenticated, render the high-impact OMC Homepage & Auth Form
+  if (!currentUser) {
+    return <LandingHomePage onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  // If loading report or workspace
+  if (!report || !workspace) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4">
         <div className="text-center space-y-3">
           <div className="w-10 h-10 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-sm font-semibold text-slate-300">Loading station workspace...</p>
+          <p className="text-sm font-semibold text-slate-300">Opening station workspace...</p>
         </div>
       </div>
     );
@@ -359,12 +446,13 @@ export default function App() {
         onOpenPumpSetup={() => setActiveTab('setup')}
         onOpenAccount={() => setIsAccountModalOpen(true)}
         onOpenReview={() => setIsSendModalOpen(true)}
+        onSignOut={handleSignOut}
         isAutoSaving={isAutoSaving}
       />
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4 pb-24 sm:pb-8">
-        {/* Shift Type & Quick Config Bar */}
+        {/* Shift Type & Live Price Status Bar */}
         <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/70 p-3 rounded-2xl border border-slate-800 text-xs">
           <div className="flex items-center gap-2">
             <span className="text-slate-400 font-semibold">Report Shift:</span>
@@ -431,6 +519,34 @@ export default function App() {
 
           <button
             type="button"
+            id="tab-discharge"
+            onClick={() => setActiveTab('discharge')}
+            className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 whitespace-nowrap ${
+              activeTab === 'discharge'
+                ? 'bg-purple-500 text-white shadow-md shadow-purple-500/20'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <Truck className="w-4 h-4" />
+            <span>Discharge Reports</span>
+          </button>
+
+          <button
+            type="button"
+            id="tab-pricechange"
+            onClick={() => setActiveTab('pricechange')}
+            className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 whitespace-nowrap ${
+              activeTab === 'pricechange'
+                ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <DollarSign className="w-4 h-4" />
+            <span>Price Change</span>
+          </button>
+
+          <button
+            type="button"
             id="tab-expenses"
             onClick={() => setActiveTab('expenses')}
             className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 whitespace-nowrap ${
@@ -486,7 +602,33 @@ export default function App() {
           />
         )}
 
-        {/* Tab 3: Daily Expenses */}
+        {/* Tab 3: Dedicated Fuel Discharge Reports */}
+        {activeTab === 'discharge' && (
+          <DischargeReportSection
+            userId={currentUser.id}
+            workspace={workspace}
+            products={products}
+            pumps={pumps}
+            dischargeReports={dischargeReports}
+            onSaveReport={handleSaveDischarge}
+            onDeleteReport={handleDeleteDischarge}
+          />
+        )}
+
+        {/* Tab 4: Price Change Reports & Stock Revaluation */}
+        {activeTab === 'pricechange' && (
+          <PriceChangeSection
+            userId={currentUser.id}
+            workspace={workspace}
+            products={products}
+            pumps={pumps}
+            priceChangeReports={priceChangeReports}
+            onSaveReport={handleSavePriceChange}
+            onDeleteReport={handleDeletePriceChange}
+          />
+        )}
+
+        {/* Tab 5: Daily Expenses */}
         {activeTab === 'expenses' && (
           <ExpensesSection
             expenses={report.expenses}
@@ -494,14 +636,14 @@ export default function App() {
           />
         )}
 
-        {/* Tab 4: Dynamic Pump & Product Setup */}
+        {/* Tab 6: Dynamic Pump & Product Setup */}
         {activeTab === 'setup' && (
           <PumpConfigManager
             userId={currentUser.id}
             workspace={workspace}
             products={products}
             pumps={pumps}
-            onConfigChanged={reloadWorkspaceAndData}
+            onConfigChanged={() => reloadWorkspaceAndData()}
           />
         )}
       </main>
@@ -558,7 +700,7 @@ export default function App() {
         onClose={() => setIsAccountModalOpen(false)}
         currentUser={currentUser}
         workspace={workspace}
-        onUserOrWorkspaceSwitched={reloadWorkspaceAndData}
+        onUserOrWorkspaceSwitched={() => reloadWorkspaceAndData()}
       />
 
       {/* Bulk Upload & Photo OCR Modal */}
