@@ -7,6 +7,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Camera, RefreshCw, Check, Download, Share2, Sparkles, X, AlertTriangle, Image as ImageIcon, CheckCircle2 } from 'lucide-react';
 import { recognizeMeterImage } from '../ocr/ocrService';
 import { preprocessMeterImage } from '../ocr/imagePreprocessing';
+import { aiRecognizeMeterImage } from '../ocr/aiMeterReader';
 
 interface InAppCameraModalProps {
   isOpen: boolean;
@@ -33,6 +34,13 @@ export const InAppCameraModal: React.FC<InAppCameraModalProps> = ({
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrResult, setOcrResult] = useState<{ candidate: number | null; confidence: number; text?: string } | null>(null);
   const [gallerySaveNotice, setGallerySaveNotice] = useState<string | null>(null);
+  const [useAiReader, setUseAiReader] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('omc_use_ai_reader') === '1';
+    } catch (e) {
+      return false;
+    }
+  });
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -126,16 +134,27 @@ export const InAppCameraModal: React.FC<InAppCameraModalProps> = ({
   // Run OCR
   const runOcrOnPhoto = async (dataUrl: string) => {
     setIsOcrProcessing(true);
-    setOcrProgress(15);
+    setOcrProgress(8);
     try {
-      const res = await recognizeMeterImage(dataUrl, expectedOpeningValue, (p) => setOcrProgress(p));
-      setOcrResult({
-        candidate: res.candidate,
-        confidence: res.confidence,
-        text: res.rawText,
-      });
+      if (useAiReader) {
+        setOcrProgress(12);
+        const aiRes = await aiRecognizeMeterImage(dataUrl, expectedOpeningValue, (p) => setOcrProgress(p));
+        setOcrResult({
+          candidate: aiRes.candidate,
+          confidence: aiRes.confidence,
+          text: aiRes.rawText,
+        });
+      } else {
+        setOcrProgress(15);
+        const res = await recognizeMeterImage(dataUrl, expectedOpeningValue, (p) => setOcrProgress(p));
+        setOcrResult({
+          candidate: res.candidate,
+          confidence: res.confidence,
+          text: res.rawText,
+        });
+      }
     } catch (e) {
-      console.warn('OCR processing failed:', e);
+      console.warn('OCR/AI processing failed:', e);
     } finally {
       setIsOcrProcessing(false);
     }
@@ -297,6 +316,22 @@ export const InAppCameraModal: React.FC<InAppCameraModalProps> = ({
                 >
                   <RefreshCw className="w-4 h-4" />
                 </button>
+
+                {/* Use AI Reader toggle */}
+                <div className="absolute bottom-4 left-4 bg-slate-900/70 border border-slate-700 px-3 py-2 rounded-lg flex items-center gap-2">
+                  <label className="text-xs text-slate-300 mr-2">Use AI Reader</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !useAiReader;
+                      setUseAiReader(next);
+                      try { localStorage.setItem('omc_use_ai_reader', next ? '1' : '0'); } catch(e) {}
+                    }}
+                    className={`px-2 py-1 rounded-full text-xs font-semibold ${useAiReader ? 'bg-amber-500 text-slate-900' : 'bg-slate-800 text-slate-300'}`}
+                  >
+                    {useAiReader ? 'AI' : 'OCR'}
+                  </button>
+                </div>
               </div>
             )
           ) : (

@@ -8,6 +8,7 @@ export interface UserProfile {
   id: string;
   email: string;
   fullName: string;
+  stationName?: string;
   role?: string;
   createdAt?: string;
 }
@@ -110,6 +111,64 @@ export interface HubtelDetails {
   hubtelAccount: string;
   dashboardAmount: number | null;
   bankingWithHubtel: number | null;
+}
+
+export interface DischargePumpMeter {
+  pumpLabel: string;
+  meter: number;
+}
+
+export interface DischargeReport {
+  id: string;
+  workspaceId: string;
+  stationName: string;
+  productCode: string;
+  date: string;
+  truckNumber?: string;
+  driverName?: string;
+  waybillNumber?: string;
+  beforeTime: string;
+  stockUndergroundBefore: number;
+  invoiceQuantity: number;
+  expectedStock: number;
+  openingMeters: DischargePumpMeter[];
+  totalOpeningMeters: number;
+  afterTime?: string;
+  stockAfterDischarge?: number | null;
+  litresSoldDuringDischarge: number;
+  theoreticalStock?: number | null;
+  overageOrShortage?: number | null;
+  closingMeters: DischargePumpMeter[];
+  totalClosingMeters: number;
+  notes?: string;
+  status: 'Before Discharge' | 'Completed';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PriceChangePumpReading {
+  pumpLabel: string;
+  closingMeter: number;
+  litresSold: number;
+}
+
+export interface PriceChangeReport {
+  id: string;
+  workspaceId: string;
+  stationName: string;
+  productCode: string;
+  date: string;
+  effectiveTime: string;
+  oldPrice: number;
+  newPrice: number;
+  priceDifference: number;
+  meterReadingsAtChange: PriceChangePumpReading[];
+  totalLitresSoldAtOldPrice: number;
+  physicalStockAtChange: number;
+  stockGainOrLossValueGhs: number;
+  status: 'Draft' | 'Sent';
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type ReportStatus = 'Draft' | 'In Progress' | 'Ready for Review' | 'Ready to Send' | 'Sent';
@@ -220,3 +279,73 @@ export const PUMP_SEQUENCE: { id: PumpId; product: ProductType; name: string; po
   { id: 'D3', product: 'AGO', name: 'D3 (Diesel)', position: 7 },
   { id: 'D4', product: 'AGO', name: 'D4 (Diesel)', position: 8 },
 ];
+
+export interface ReportFormatSettings {
+  presetId: 'oborpah_default' | 'omc_standard' | 'compact' | 'detailed_audit' | 'custom';
+  stationHeaderCase: 'uppercase' | 'titlecase';
+  dateFormat: 'DD/MM/YYYY' | 'DD-MM-YYYY' | 'YYYY-MM-DD' | 'D MMM YYYY';
+  includeLocation: boolean;
+  includeTimestamp: boolean;
+  headerCustomNote: string;
+  footerCustomNote: string;
+  currencySymbol: string;
+  volumeUnit: string;
+  pumpSeparator: string;
+  pumpDecimals: number;
+  showOpeningMetersInDaily: boolean;
+  showIndividualPumpSold: boolean;
+  showTotalLitresSoldLine: boolean;
+  showProductSalesGhs: boolean;
+  showPhysicalStock: boolean;
+  showUnitPrice: boolean;
+  showVariance: boolean;
+  varianceLabel: string;
+  cashAccountTitle: string;
+  totalSalesLabel: string;
+  expensesStyle: 'itemized' | 'total_only' | 'hidden';
+  cashToBankLabel: string;
+  showHubtelSection: boolean;
+  showAnalogueSection: boolean;
+  dischargeIncludeTruckDriver: boolean;
+  dischargeBeforeTitle: string;
+  dischargeAfterTitle: string;
+  dischargeOverageLabel: string;
+  dischargeShortageLabel: string;
+  priceChangeTitle: string;
+  showStockRevaluationGhs: boolean;
+}
+
+export const DEFAULT_REPORT_FORMAT_SETTINGS: ReportFormatSettings = {
+  presetId: 'oborpah_default',
+  stationHeaderCase: 'uppercase',
+  dateFormat: 'DD/MM/YYYY',
+  includeLocation: false,
+  includeTimestamp: false,
+  headerCustomNote: '',
+  footerCustomNote: '',
+  currencySymbol: '¢',
+  volumeUnit: '',
+  pumpSeparator: '=',
+  pumpDecimals: 2,
+  showOpeningMetersInDaily: false,
+  showIndividualPumpSold: false,
+  showTotalLitresSoldLine: true,
+  showProductSalesGhs: true,
+  showPhysicalStock: true,
+  showUnitPrice: true,
+  showVariance: true,
+  varianceLabel: 'Variance',
+  cashAccountTitle: 'CASH ACCOUNT',
+  totalSalesLabel: 'TOTAL- SALES',
+  expensesStyle: 'itemized',
+  cashToBankLabel: 'CASH TO BANK(or IN TILL)',
+  showHubtelSection: true,
+  showAnalogueSection: true,
+  dischargeIncludeTruckDriver: true,
+  dischargeBeforeTitle: 'BEFORE DISCHARGE',
+  dischargeAfterTitle: 'AFTER DISCHARGE',
+  dischargeOverageLabel: 'OVERAGE',
+  dischargeShortageLabel: 'SHORTAGE',
+  priceChangeTitle: 'PRICE CHANGE REPORT',
+  showStockRevaluationGhs: true,
+};

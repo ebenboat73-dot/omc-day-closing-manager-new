@@ -15,7 +15,7 @@ import {
   togglePumpActive,
   deletePump,
   saveWorkspacePumps,
-} from '../../services/dataService';
+} from '../../services/repository';
 import {
   Plus,
   ArrowUp,
@@ -54,16 +54,22 @@ export const PumpConfigManager: React.FC<PumpConfigManagerProps> = ({
 
   const [editingPumpId, setEditingPumpId] = useState<string | null>(null);
   const [editLabelValue, setEditLabelValue] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
   // Handle Add Pump
-  const handleAddPump = (e: React.FormEvent) => {
+  const handleAddPump = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPumpLabel.trim()) return;
 
-    addPump(userId, newPumpProductCode, newPumpLabel.trim());
-    setNewPumpLabel('');
-    setIsAddPumpModalOpen(false);
-    onConfigChanged();
+    setError(null);
+    try {
+      await addPump(userId, newPumpProductCode, newPumpLabel.trim());
+      setNewPumpLabel('');
+      setIsAddPumpModalOpen(false);
+      onConfigChanged();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Could not add the pump.');
+    }
   };
 
   // Handle Edit Label
@@ -72,29 +78,44 @@ export const PumpConfigManager: React.FC<PumpConfigManagerProps> = ({
     setEditLabelValue(pump.label);
   };
 
-  const handleSaveEdit = (pumpId: string) => {
+  const handleSaveEdit = async (pumpId: string) => {
     if (!editLabelValue.trim()) return;
-    updatePump(userId, pumpId, { label: editLabelValue.trim() });
-    setEditingPumpId(null);
-    onConfigChanged();
+    setError(null);
+    try {
+      await updatePump(userId, pumpId, { label: editLabelValue.trim() });
+      setEditingPumpId(null);
+      onConfigChanged();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Could not update the pump.');
+    }
   };
 
   // Handle Toggle Active/Inactive (Deactivation preserves history!)
-  const handleToggleActive = (pump: ConfiguredPump) => {
-    togglePumpActive(userId, pump.id, !pump.isActive);
-    onConfigChanged();
+  const handleToggleActive = async (pump: ConfiguredPump) => {
+    setError(null);
+    try {
+      await togglePumpActive(userId, pump.id, !pump.isActive);
+      onConfigChanged();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Could not update the pump.');
+    }
   };
 
   // Handle Remove / Delete Pump
-  const handleDeletePump = (pump: ConfiguredPump) => {
+  const handleDeletePump = async (pump: ConfiguredPump) => {
     if (window.confirm(`Are you sure you want to remove nozzle "${pump.label}" from your station configuration?`)) {
-      deletePump(userId, pump.id);
-      onConfigChanged();
+      setError(null);
+      try {
+        await deletePump(userId, pump.id);
+        onConfigChanged();
+      } catch (saveError) {
+        setError(saveError instanceof Error ? saveError.message : 'Could not remove the pump.');
+      }
     }
   };
 
   // Handle Move Up / Down
-  const handleMove = (index: number, direction: 'up' | 'down') => {
+  const handleMove = async (index: number, direction: 'up' | 'down') => {
     const newPumps = [...pumps];
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
     if (targetIndex < 0 || targetIndex >= newPumps.length) return;
@@ -108,8 +129,13 @@ export const PumpConfigManager: React.FC<PumpConfigManagerProps> = ({
       p.displayOrder = idx + 1;
     });
 
-    saveWorkspacePumps(userId, newPumps);
-    onConfigChanged();
+    setError(null);
+    try {
+      await saveWorkspacePumps(userId, newPumps);
+      onConfigChanged();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Could not reorder the pumps.');
+    }
   };
 
   // Group pumps by product
@@ -141,6 +167,7 @@ export const PumpConfigManager: React.FC<PumpConfigManagerProps> = ({
       </div>
 
       {/* Preservation Rule Callout */}
+      {error && <p role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">{error}</p>}
       <div className="bg-blue-950/40 border border-blue-500/30 rounded-xl p-3.5 flex items-start gap-3">
         <AlertCircle className="w-5 h-5 text-blue-400 shrink-0 mt-0.5" />
         <div className="text-xs text-blue-200/90 leading-relaxed">
