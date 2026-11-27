@@ -95,4 +95,3 @@ export function formatCompleteDischargeText(
 ): string {
   return `${formatBeforeDischargeText(report, settings)}\n\n---\n\n${formatAfterDischargeText(report, settings)}`;
 }
-

@@ -4,7 +4,7 @@
  * Mobile-first multi-user web app • React + TypeScript • Supabase & Vercel ready
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   DailyReport,
   ReportPumpReading,
@@ -22,14 +22,11 @@ import {
   DEFAULT_REPORT_FORMAT_SETTINGS,
 } from './types/report';
 import {
-  getCurrentSessionUser,
-  getActiveUser,
   getOrCreateWorkspace,
   getWorkspaceProducts,
   getWorkspacePumps,
   getReportByDate,
   saveDailyReport,
-  seedDemoWorkspacesIfEmpty,
   deletePump,
   updateProductPrice,
   getDischargeReports,
@@ -38,13 +35,17 @@ import {
   getPriceChangeReports,
   savePriceChangeReport,
   deletePriceChangeReport,
-  logoutUser,
   getReportFormatSettings,
   saveReportFormatSettings,
   resetReportFormatSettings,
-} from './services/dataService';
+  syncPendingReports,
+} from './services/repository';
 import { recalculateReport } from './utils/calculations';
 import { ReportHeader } from './features/reports/ReportHeader';
+import { useAuth } from './features/auth/AuthContext';
+import { signOut } from './services/authService';
+import type { AiVisionResult } from './services/aiVisionService';
+import { OnboardingModal } from './features/auth/OnboardingModal';
 import { MeterSequenceGrid } from './features/meters/MeterSequenceGrid';
 import { StockReconciliationSection } from './features/stock/StockReconciliationSection';
 import { ExpensesSection } from './features/expenses/ExpensesSection';
@@ -55,7 +56,6 @@ import { BulkUploadModal } from './features/meters/BulkUploadModal';
 import { SendReportModal } from './features/sharing/SendReportModal';
 import { ReportHistoryModal } from './features/reports/ReportHistoryModal';
 import { PhotoPreviewModal } from './features/meters/PhotoPreviewModal';
-import { LandingHomePage } from './features/auth/LandingHomePage';
 import { DischargeReportSection } from './features/discharge/DischargeReportSection';
 import { PriceChangeSection } from './features/pricechange/PriceChangeSection';
 import { ReportFormatManager } from './features/formats/ReportFormatManager';
@@ -75,8 +75,8 @@ import {
 } from 'lucide-react';
 
 export default function App() {
-  // Current authenticated user session (null when visiting landing homepage)
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => getCurrentSessionUser());
+  const { user: authenticatedUser } = useAuth();
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(authenticatedUser);
   const [workspace, setWorkspace] = useState<StationWorkspace | null>(null);
   const [products, setProducts] = useState<ConfiguredProduct[]>([]);
   const [pumps, setPumps] = useState<ConfiguredPump[]>([]);
@@ -85,16 +85,24 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState<string>('2026-10-14');
 
   const [report, setReport] = useState<DailyReport | null>(null);
-  const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const [isLoadingData, setIsLoadingData] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
+  const [dataErrorKind, setDataErrorKind] = useState<'load' | 'save' | 'configuration' | 'sync' | null>(null);
+  const [saveState, setSaveState] = useState<'saved' | 'saving' | 'offline' | 'error'>('saved');
+  const [pendingReportCount, setPendingReportCount] = useState(0);
+  const skipNextReportSave = useRef(false);
+  const reportSaveQueue = useRef<Promise<void>>(Promise.resolve());
+  const reportSaveRevision = useRef(0);
+  const reportSaveTimer = useRef<number | null>(null);
+  const dataLoadRevision = useRef(0);
+  const dataOwnerUserId = useRef<string | null>(authenticatedUser?.id ?? null);
 
   // Discharge & Price Change reports
   const [dischargeReports, setDischargeReports] = useState<DischargeReport[]>([]);
   const [priceChangeReports, setPriceChangeReports] = useState<PriceChangeReport[]>([]);
 
   // Customizable report format settings per manager
-  const [formatSettings, setFormatSettings] = useState<ReportFormatSettings>(() =>
-    currentUser ? getReportFormatSettings(currentUser.id) : DEFAULT_REPORT_FORMAT_SETTINGS
-  );
+  const [formatSettings, setFormatSettings] = useState<ReportFormatSettings>(DEFAULT_REPORT_FORMAT_SETTINGS);
 
   // Active navigation tab
   const [activeTab, setActiveTab] = useState<
@@ -120,70 +128,246 @@ export default function App() {
     title: '',
   });
 
-  // Reload current workspace and data
-  const reloadWorkspaceAndData = useCallback((userParam?: UserProfile | null) => {
-    seedDemoWorkspacesIfEmpty();
-    const user = userParam || currentUser || getCurrentSessionUser();
-    if (!user) {
-      setCurrentUser(null);
+  // Load the account workspace and active report from Supabase.
+  const reloadWorkspaceAndData = useCallback(async () => {
+    if (!authenticatedUser) {
+      if (dataOwnerUserId.current !== null) {
+        dataOwnerUserId.current = null;
+        setCurrentUser(null);
+        setWorkspace(null);
+        setProducts([]);
+        setPumps([]);
+        setReport(null);
+        setDischargeReports([]);
+        setPriceChangeReports([]);
+      }
+      setIsLoadingData(false);
       return;
     }
+    if (dataOwnerUserId.current !== authenticatedUser.id) {
+      dataOwnerUserId.current = authenticatedUser.id;
+      setCurrentUser(authenticatedUser);
+      setWorkspace(null);
+      setProducts([]);
+      setPumps([]);
+      setReport(null);
+      setDischargeReports([]);
+      setPriceChangeReports([]);
+      setFormatSettings(DEFAULT_REPORT_FORMAT_SETTINGS);
+      setPendingReportCount(0);
+    }
+    const revision = ++dataLoadRevision.current;
+    setIsLoadingData(true);
+    setDataError(null);
+    setDataErrorKind(null);
+    try {
+      const ws = await getOrCreateWorkspace(authenticatedUser.id);
+      const [prods, configuredPumps, loadedReport, dReports, pcReports, settings] = await Promise.all([
+        getWorkspaceProducts(authenticatedUser.id),
+        getWorkspacePumps(authenticatedUser.id),
+        getReportByDate(authenticatedUser.id, selectedDate),
+        getDischargeReports(authenticatedUser.id),
+        getPriceChangeReports(authenticatedUser.id),
+        getReportFormatSettings(authenticatedUser.id),
+      ]);
+      if (revision !== dataLoadRevision.current) return;
+      setCurrentUser(authenticatedUser);
+      setWorkspace(ws);
+      setProducts(prods);
+      setPumps(configuredPumps);
+      skipNextReportSave.current = true;
+      setReport(loadedReport);
+      setDischargeReports(dReports);
+      setPriceChangeReports(pcReports);
+      setFormatSettings(settings);
+      setSaveState(loadedReport.saveStatus === 'failed' ? 'offline' : 'saved');
+    } catch (error) {
+      if (revision === dataLoadRevision.current) {
+        setDataError(error instanceof Error ? error.message : 'Could not load station data.');
+        setDataErrorKind('load');
+      }
+    } finally {
+      if (revision === dataLoadRevision.current) setIsLoadingData(false);
+    }
+  }, [selectedDate, authenticatedUser]);
 
-    setCurrentUser(user);
-
-    const ws = getOrCreateWorkspace(user.id);
-    setWorkspace(ws);
-
-    const prods = getWorkspaceProducts(user.id);
-    setProducts(prods);
-
-    const pms = getWorkspacePumps(user.id);
-    setPumps(pms);
-
-    const loadedReport = getReportByDate(user.id, selectedDate);
-    setReport(loadedReport);
-
-    const dReports = getDischargeReports(user.id);
-    setDischargeReports(dReports);
-
-    const pcReports = getPriceChangeReports(user.id);
-    setPriceChangeReports(pcReports);
-
-    const fSettings = getReportFormatSettings(user.id);
-    setFormatSettings(fSettings);
-  }, [currentUser, selectedDate]);
+  const reloadConfiguration = useCallback(async () => {
+    if (!authenticatedUser) return;
+    setDataError(null);
+    setDataErrorKind(null);
+    try {
+      const ws = await getOrCreateWorkspace(authenticatedUser.id);
+      const [prods, configuredPumps] = await Promise.all([
+        getWorkspaceProducts(authenticatedUser.id),
+        getWorkspacePumps(authenticatedUser.id),
+      ]);
+      setWorkspace(ws);
+      setProducts(prods);
+      setPumps(configuredPumps);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not load station settings.');
+      setDataErrorKind('configuration');
+    }
+  }, [authenticatedUser]);
 
   useEffect(() => {
-    if (currentUser) {
-      reloadWorkspaceAndData(currentUser);
+    void reloadWorkspaceAndData();
+  }, [reloadWorkspaceAndData]);
+
+  const saveReportSnapshot = useCallback((snapshot: DailyReport, revision: number) => {
+    if (!authenticatedUser) return Promise.resolve();
+    const operation = reportSaveQueue.current.then(async () => {
+      try {
+        const savedReport = await saveDailyReport(authenticatedUser.id, snapshot);
+        if (revision === reportSaveRevision.current) {
+          setSaveState(savedReport.saveStatus === 'failed' ? 'offline' : 'saved');
+          if (dataErrorKind === 'save') {
+            setDataError(null);
+            setDataErrorKind(null);
+          }
+        }
+      } catch (error) {
+        if (revision === reportSaveRevision.current) {
+          setSaveState('error');
+          setDataError(error instanceof Error ? error.message : 'Could not save this report.');
+          setDataErrorKind('save');
+        }
+        throw error;
+      }
+    });
+    reportSaveQueue.current = operation.catch(() => undefined);
+    return operation;
+  }, [authenticatedUser, dataErrorKind]);
+
+  useEffect(() => {
+    if (!report || !authenticatedUser || report.reportDate !== selectedDate) return;
+    if (skipNextReportSave.current) {
+      skipNextReportSave.current = false;
+      return;
     }
-  }, [currentUser, reloadWorkspaceAndData]);
+    const revision = ++reportSaveRevision.current;
+    setSaveState('saving');
+    reportSaveTimer.current = window.setTimeout(() => {
+      void saveReportSnapshot(report, revision).catch(() => undefined);
+    }, 650);
+    return () => {
+      if (reportSaveTimer.current !== null) window.clearTimeout(reportSaveTimer.current);
+    };
+  }, [report, selectedDate, authenticatedUser, saveReportSnapshot]);
 
-  // Persist report with debounced status indication
-  const persistReport = useCallback(
-    (updated: DailyReport) => {
-      if (!currentUser) return updated;
-      setIsAutoSaving(true);
-      const saved = saveDailyReport(currentUser.id, updated);
-      setTimeout(() => {
-        setIsAutoSaving(false);
-      }, 400);
-      return saved;
-    },
-    [currentUser]
-  );
+  const retryReportSave = useCallback(async () => {
+    if (!report || !authenticatedUser) return;
+    if (reportSaveTimer.current !== null) window.clearTimeout(reportSaveTimer.current);
+    const revision = ++reportSaveRevision.current;
+    setSaveState('saving');
+    setDataError(null);
+    setDataErrorKind(null);
+    try {
+      await saveReportSnapshot(report, revision);
+    } catch {
+      return;
+    }
+  }, [report, authenticatedUser, saveReportSnapshot]);
 
-  // Auth handler: Successful Login from Landing Page
-  const handleLoginSuccess = (user: UserProfile) => {
-    setCurrentUser(user);
-    reloadWorkspaceAndData(user);
-  };
+  const handleDateChange = useCallback(async (newDate: string) => {
+    if (report && authenticatedUser && report.reportDate === selectedDate) {
+      if (reportSaveTimer.current !== null) window.clearTimeout(reportSaveTimer.current);
+      const revision = ++reportSaveRevision.current;
+      setSaveState('saving');
+      try {
+        await saveReportSnapshot(report, revision);
+      } catch {
+        return;
+      }
+    }
+    setSelectedDate(newDate);
+  }, [report, authenticatedUser, selectedDate, saveReportSnapshot]);
 
+  useEffect(() => {
+    if (!authenticatedUser) return;
+    const updatePendingCount = (event: Event) => {
+      const detail = (event as CustomEvent<{ userId: string; pending: number }>).detail;
+      if (detail?.userId === authenticatedUser.id) {
+        setPendingReportCount(detail.pending);
+        if (detail.pending > 0) setSaveState('offline');
+      }
+    };
+    const retryPending = async () => {
+      try {
+        const result = await syncPendingReports(authenticatedUser.id);
+        setPendingReportCount(result.pending);
+        if (result.pending === 0) setSaveState('saved');
+        else setSaveState('offline');
+      } catch (error) {
+        setDataError(error instanceof Error ? error.message : 'Could not sync pending reports.');
+        setDataErrorKind('sync');
+      }
+    };
+    window.addEventListener('online', retryPending);
+    window.addEventListener('omc:pending-sync', updatePendingCount);
+    void retryPending();
+    return () => {
+      window.removeEventListener('online', retryPending);
+      window.removeEventListener('omc:pending-sync', updatePendingCount);
+    };
+  }, [authenticatedUser]);
+
+  const retryDataError = useCallback(() => {
+    if (dataErrorKind === 'load' || (report && report.reportDate !== selectedDate)) {
+      void reloadWorkspaceAndData();
+    } else if (dataErrorKind === 'configuration') {
+      void reloadConfiguration();
+    } else if (dataErrorKind === 'sync' && authenticatedUser) {
+      void syncPendingReports(authenticatedUser.id).then((result) => {
+        setPendingReportCount(result.pending);
+        setSaveState(result.pending ? 'offline' : 'saved');
+        setDataError(null);
+        setDataErrorKind(null);
+      }).catch((error: unknown) => {
+        setDataError(error instanceof Error ? error.message : 'Could not sync pending reports.');
+      });
+    } else {
+      void retryReportSave();
+    }
+  }, [dataErrorKind, report, selectedDate, reloadWorkspaceAndData, reloadConfiguration, authenticatedUser, retryReportSave]);
+
+  const reloadWorkspaceDataSafely = useCallback(async () => {
+    if (report && authenticatedUser && report.reportDate === selectedDate) {
+      if (reportSaveTimer.current !== null) window.clearTimeout(reportSaveTimer.current);
+      const revision = ++reportSaveRevision.current;
+      setSaveState('saving');
+      try {
+        await saveReportSnapshot(report, revision);
+      } catch {
+        return;
+      }
+    }
+    await reloadWorkspaceAndData();
+  }, [report, authenticatedUser, selectedDate, saveReportSnapshot, reloadWorkspaceAndData]);
+
+  // Show onboarding for first-time users (stored per browser)
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('omc_seen_onboarding') !== '1';
+    } catch (e) {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    if (showOnboarding) {
+      // mark seen after short delay to allow modal rendering decisions elsewhere
+      try { localStorage.setItem('omc_seen_onboarding', '1'); } catch (e) {}
+    }
+  }, [showOnboarding]);
   // Auth handler: Sign out
-  const handleSignOut = () => {
-    logoutUser();
-    setCurrentUser(null);
-    setReport(null);
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not sign out.');
+      setDataErrorKind('configuration');
+    }
   };
 
   // Update a single pump reading
@@ -197,9 +381,7 @@ export default function App() {
         ...prev,
         pumps: updatedPumps,
       };
-      const recalculated = recalculateReport(nextReport, products);
-      persistReport(recalculated);
-      return recalculated;
+      return recalculateReport(nextReport, products);
     });
   };
 
@@ -217,15 +399,17 @@ export default function App() {
           ...prev,
           pumps: filteredPumps,
         };
-        const recalculated = recalculateReport(nextReport, products);
-        persistReport(recalculated);
-        return recalculated;
+        return recalculateReport(nextReport, products);
       });
 
       // Also remove from workspace configuration so it doesn't reappear
       if (target.pumpId) {
-        deletePump(currentUser.id, target.pumpId);
-        setPumps(getWorkspacePumps(currentUser.id));
+        deletePump(currentUser.id, target.pumpId)
+          .then(setPumps)
+          .catch((error: unknown) => {
+            setDataError(error instanceof Error ? error.message : 'Could not remove the pump.');
+            setDataErrorKind('configuration');
+          });
       }
     }
   };
@@ -234,8 +418,12 @@ export default function App() {
   const handleUpdateUnitPrice = (productCode: string, newPrice: number) => {
     if (!report || !currentUser) return;
 
-    updateProductPrice(currentUser.id, productCode, newPrice);
-    setProducts(getWorkspaceProducts(currentUser.id));
+    updateProductPrice(currentUser.id, productCode, newPrice)
+      .then(setProducts)
+      .catch((error: unknown) => {
+        setDataError(error instanceof Error ? error.message : 'Could not save the product price.');
+        setDataErrorKind('configuration');
+      });
 
     setReport((prev) => {
       if (!prev) return null;
@@ -247,9 +435,7 @@ export default function App() {
         ...prev,
         productPrices: newPrices,
       };
-      const recalculated = recalculateReport(nextReport, products);
-      persistReport(recalculated);
-      return recalculated;
+      return recalculateReport(nextReport, products);
     });
   };
 
@@ -262,7 +448,6 @@ export default function App() {
         ...prev,
         shiftType,
       };
-      persistReport(nextReport);
       return nextReport;
     });
   };
@@ -278,9 +463,7 @@ export default function App() {
         ...prev,
         stocks: updatedStocks,
       };
-      const recalculated = recalculateReport(nextReport, products);
-      persistReport(recalculated);
-      return recalculated;
+      return recalculateReport(nextReport, products);
     });
   };
 
@@ -298,7 +481,6 @@ export default function App() {
         ...prev,
         hubtel: nextHubtel,
       };
-      persistReport(nextReport);
       return nextReport;
     });
   };
@@ -313,9 +495,7 @@ export default function App() {
         ...prev,
         expenses,
       };
-      const recalculated = recalculateReport(nextReport, products);
-      persistReport(recalculated);
-      return recalculated;
+      return recalculateReport(nextReport, products);
     });
   };
 
@@ -336,9 +516,7 @@ export default function App() {
         pumps: updatedPumps,
         status: 'Ready for Review',
       };
-      const recalculated = recalculateReport(nextReport, products);
-      persistReport(recalculated);
-      return recalculated;
+      return recalculateReport(nextReport, products);
     });
   };
 
@@ -347,7 +525,7 @@ export default function App() {
     photoDataUrl: string,
     candidateReading?: number | null,
     confidence?: number,
-    metadata?: any
+    metadata?: Partial<AiVisionResult>
   ) => {
     if (!activeCameraPump || !report) return;
 
@@ -390,7 +568,7 @@ export default function App() {
   };
 
   // Update report status (e.g. sent via WhatsApp)
-  const handleUpdateStatus = (status: ReportStatus, sentVia?: any) => {
+  const handleUpdateStatus = (status: ReportStatus, sentVia?: DailyReport['sentVia']) => {
     if (!report) return;
     setReport((prev) => {
       if (!prev) return null;
@@ -400,7 +578,6 @@ export default function App() {
         sentVia: sentVia || prev.sentVia,
         sentAt: status === 'Sent' ? new Date().toISOString() : prev.sentAt,
       };
-      persistReport(updated);
       return updated;
     });
   };
@@ -415,56 +592,105 @@ export default function App() {
   };
 
   // Discharge reports handlers
-  const handleSaveDischarge = (dReport: DischargeReport) => {
+  const handleSaveDischarge = async (dReport: DischargeReport) => {
     if (!currentUser) return;
-    saveDischargeReport(currentUser.id, dReport);
-    setDischargeReports(getDischargeReports(currentUser.id));
+    try {
+      const saved = await saveDischargeReport(currentUser.id, dReport);
+      setDischargeReports((previous) => [saved, ...previous.filter((item) => item.id !== saved.id)]);
+      setDataError(null);
+      setDataErrorKind(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not save the discharge report.');
+      setDataErrorKind('configuration');
+    }
   };
 
-  const handleDeleteDischarge = (reportId: string) => {
+  const handleDeleteDischarge = async (reportId: string) => {
     if (!currentUser) return;
-    deleteDischargeReport(currentUser.id, reportId);
-    setDischargeReports(getDischargeReports(currentUser.id));
+    try {
+      await deleteDischargeReport(currentUser.id, reportId);
+      setDischargeReports((previous) => previous.filter((item) => item.id !== reportId));
+      setDataError(null);
+      setDataErrorKind(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not delete the discharge report.');
+      setDataErrorKind('configuration');
+    }
   };
 
   // Price change reports handlers
-  const handleSavePriceChange = (pcReport: PriceChangeReport) => {
+  const handleSavePriceChange = async (pcReport: PriceChangeReport) => {
     if (!currentUser) return;
-    savePriceChangeReport(currentUser.id, pcReport);
-    setPriceChangeReports(getPriceChangeReports(currentUser.id));
+    try {
+      const saved = await savePriceChangeReport(currentUser.id, pcReport);
+      setPriceChangeReports((previous) => [saved, ...previous.filter((item) => item.id !== saved.id)]);
+      setDataError(null);
+      setDataErrorKind(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not save the price change report.');
+      setDataErrorKind('configuration');
+    }
   };
 
-  const handleDeletePriceChange = (reportId: string) => {
+  const handleDeletePriceChange = async (reportId: string) => {
     if (!currentUser) return;
-    deletePriceChangeReport(currentUser.id, reportId);
-    setPriceChangeReports(getPriceChangeReports(currentUser.id));
+    try {
+      await deletePriceChangeReport(currentUser.id, reportId);
+      setPriceChangeReports((previous) => previous.filter((item) => item.id !== reportId));
+      setDataError(null);
+      setDataErrorKind(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not delete the price change report.');
+      setDataErrorKind('configuration');
+    }
   };
 
   // Format settings handlers
-  const handleSaveFormatSettings = (updated: ReportFormatSettings) => {
-    if (!currentUser) return;
-    saveReportFormatSettings(currentUser.id, updated);
-    setFormatSettings(updated);
+  const handleSaveFormatSettings = async (updated: ReportFormatSettings) => {
+    if (!currentUser) throw new Error('Sign in before saving report format settings.');
+    try {
+      setFormatSettings(await saveReportFormatSettings(currentUser.id, updated));
+      setDataError(null);
+      setDataErrorKind(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not save report format settings.');
+      setDataErrorKind('configuration');
+      throw error;
+    }
   };
 
-  const handleResetFormatSettings = () => {
-    if (!currentUser) return;
-    const reset = resetReportFormatSettings(currentUser.id);
-    setFormatSettings(reset);
+  const handleResetFormatSettings = async () => {
+    if (!currentUser) throw new Error('Sign in before resetting report format settings.');
+    try {
+      setFormatSettings(await resetReportFormatSettings(currentUser.id));
+      setDataError(null);
+      setDataErrorKind(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not reset report format settings.');
+      setDataErrorKind('configuration');
+      throw error;
+    }
   };
 
-  // If user is not authenticated, render the high-impact OMC Homepage & Auth Form
-  if (!currentUser) {
-    return <LandingHomePage onLoginSuccess={handleLoginSuccess} />;
-  }
-
-  // If loading report or workspace
-  if (!report || !workspace) {
+  if (!currentUser || isLoadingData || ((!report || !workspace) && !dataError)) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4">
         <div className="text-center space-y-3">
           <div className="w-10 h-10 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
           <p className="text-sm font-semibold text-slate-300">Opening station workspace...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!report || !workspace || report.reportDate !== selectedDate) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4">
+        <div className="max-w-md space-y-4 text-center">
+          <p role="alert" className="text-sm text-rose-300">{dataError || 'Could not load station data.'}</p>
+          <button type="button" onClick={reloadWorkspaceAndData} className="rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold text-slate-950">
+            Retry
+          </button>
         </div>
       </div>
     );
@@ -477,18 +703,27 @@ export default function App() {
         report={report}
         currentUser={currentUser}
         workspace={workspace}
-        onDateChange={(newDate) => setSelectedDate(newDate)}
+        onDateChange={(newDate) => { void handleDateChange(newDate); }}
         onOpenHistory={() => setIsHistoryModalOpen(true)}
         onOpenPumpSetup={() => setActiveTab('setup')}
         onOpenAccount={() => setIsAccountModalOpen(true)}
         onOpenReview={() => setIsSendModalOpen(true)}
+        saveState={saveState}
+        pendingReportCount={pendingReportCount}
         onSignOut={handleSignOut}
         onOpenFormatSettings={() => setActiveTab('formats')}
-        isAutoSaving={isAutoSaving}
       />
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4 pb-24 sm:pb-8">
+        {dataError && (
+          <div role="alert" className="flex flex-col gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200 sm:flex-row sm:items-center sm:justify-between">
+            <span>{dataError}</span>
+            <button type="button" onClick={retryDataError} className="shrink-0 rounded-lg border border-rose-400/40 px-3 py-1.5 text-xs font-semibold hover:bg-rose-500/10">
+              Retry {dataErrorKind || (report.reportDate !== selectedDate ? 'load' : 'save')}
+            </button>
+          </div>
+        )}
         {/* Report Type & Live Price Status Bar */}
         <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/70 p-3 rounded-2xl border border-slate-800 text-xs">
           <div className="flex flex-wrap items-center gap-2">
@@ -727,7 +962,7 @@ export default function App() {
             workspace={workspace}
             products={products}
             pumps={pumps}
-            onConfigChanged={() => reloadWorkspaceAndData()}
+            onConfigChanged={reloadWorkspaceDataSafely}
           />
         )}
 
@@ -796,8 +1031,11 @@ export default function App() {
         onClose={() => setIsAccountModalOpen(false)}
         currentUser={currentUser}
         workspace={workspace}
-        onUserOrWorkspaceSwitched={() => reloadWorkspaceAndData()}
+        onUserOrWorkspaceSwitched={reloadWorkspaceDataSafely}
       />
+
+      {/* Onboarding modal shown to new users */}
+      <OnboardingModal isOpen={showOnboarding} onClose={() => setShowOnboarding(false)} />
 
       {/* Bulk Upload & Photo OCR Modal */}
       <BulkUploadModal
@@ -824,8 +1062,8 @@ export default function App() {
         onClose={() => setIsHistoryModalOpen(false)}
         userId={currentUser.id}
         currentDate={selectedDate}
-        onSelectDate={(newDate) => setSelectedDate(newDate)}
-        onNewReport={(newDate) => setSelectedDate(newDate)}
+        onSelectDate={(newDate) => { void handleDateChange(newDate); }}
+        onNewReport={(newDate) => { void handleDateChange(newDate); }}
       />
 
       {/* Full Photo Preview Modal */}

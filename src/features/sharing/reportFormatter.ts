@@ -235,4 +235,3 @@ export function getShareUrls(reportText: string) {
     sms: `sms:?body=${encoded}`,
   };
 }
-

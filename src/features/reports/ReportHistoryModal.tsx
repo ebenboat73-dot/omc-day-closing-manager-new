@@ -5,9 +5,9 @@
  * Scoped strictly to the active user's workspace.
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ReportIndexEntry } from '../../types/report';
-import { listUserReportIndex } from '../../services/dataService';
+import { listUserReportIndex } from '../../services/repository';
 import { X, Calendar, ArrowRight, Clock, PlusCircle } from 'lucide-react';
 import { formatReportDate } from '../sharing/reportFormatter';
 
@@ -28,9 +28,27 @@ export const ReportHistoryModal: React.FC<ReportHistoryModalProps> = ({
   onSelectDate,
   onNewReport,
 }) => {
-  if (!isOpen) return null;
+  const [reports, setReports] = useState<ReportIndexEntry[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const reports = listUserReportIndex(userId);
+  const loadReports = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      setReports(await listUserReportIndex(userId));
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Could not load report history.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) void loadReports();
+  }, [isOpen, userId]);
+
+  if (!isOpen) return null;
   const todayStr = new Date().toISOString().split('T')[0];
 
   return (
@@ -59,7 +77,14 @@ export const ReportHistoryModal: React.FC<ReportHistoryModalProps> = ({
 
         {/* List of Reports */}
         <div className="p-5 overflow-y-auto space-y-3 flex-1">
-          {reports.length === 0 ? (
+          {isLoading ? (
+            <p className="py-12 text-center text-sm text-slate-400">Loading report history...</p>
+          ) : error ? (
+            <div className="space-y-3 py-8 text-center">
+              <p role="alert" className="text-sm text-rose-300">{error}</p>
+              <button type="button" onClick={() => void loadReports()} className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-200">Retry</button>
+            </div>
+          ) : reports.length === 0 ? (
             <div className="py-12 text-center space-y-3 border border-dashed border-slate-800 rounded-xl p-6">
               <Clock className="w-10 h-10 text-slate-500 mx-auto" />
               <p className="text-sm text-slate-300 font-semibold">No saved station reports found</p>

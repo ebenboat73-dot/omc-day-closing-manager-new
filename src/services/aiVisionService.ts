@@ -58,7 +58,7 @@ export async function analyzeMeterPhotoWithAI(
         confidence: 0,
         isClear: false,
         suggestManualEntry: true,
-        unclearReason: 'AI service currently unreachable. You can enter the reading manually.',
+        unclearReason: errorMsg,
         error: errorMsg,
       };
     }

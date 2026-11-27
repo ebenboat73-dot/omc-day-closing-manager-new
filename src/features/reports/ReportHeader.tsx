@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { DailyReport, ReportStatus, UserProfile, StationWorkspace } from '../../types/report';
-import { Calendar, History, Sliders, CheckCircle2, AlertCircle, Send, Save, Building, User, RefreshCw, CloudCheck, LogOut } from 'lucide-react';
+import { Calendar, History, Sliders, CheckCircle2, AlertCircle, Send, Building, User, RefreshCw, LogOut } from 'lucide-react';
 
 interface ReportHeaderProps {
   report: DailyReport;
@@ -16,9 +16,10 @@ interface ReportHeaderProps {
   onOpenPumpSetup: () => void;
   onOpenAccount: () => void;
   onOpenReview: () => void;
+  saveState?: 'saved' | 'saving' | 'offline' | 'error';
+  pendingReportCount?: number;
   onSignOut?: () => void;
   onOpenFormatSettings?: () => void;
-  isAutoSaving?: boolean;
 }
 
 const STATUS_COLORS: Record<ReportStatus, { bg: string; text: string; border: string }> = {
@@ -38,9 +39,10 @@ export const ReportHeader: React.FC<ReportHeaderProps> = ({
   onOpenPumpSetup,
   onOpenAccount,
   onOpenReview,
+  saveState = 'saved',
+  pendingReportCount = 0,
   onSignOut,
   onOpenFormatSettings,
-  isAutoSaving = false,
 }) => {
   const statusStyle = STATUS_COLORS[report.status] || STATUS_COLORS.Draft;
 
@@ -139,10 +141,20 @@ export const ReportHeader: React.FC<ReportHeaderProps> = ({
 
             {/* Save Status Indicator */}
             <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800/60 border border-slate-700/80 text-[11px] text-slate-300">
-              {isAutoSaving ? (
+              {saveState === 'saving' ? (
                 <span className="text-amber-400 flex items-center gap-1 animate-pulse">
                   <RefreshCw className="w-3 h-3 animate-spin" />
                   <span>Saving...</span>
+                </span>
+              ) : saveState === 'offline' ? (
+                <span className="text-amber-300 flex items-center gap-1" role="status">
+                  <AlertCircle className="w-3 h-3" />
+                  <span>Offline - will sync{pendingReportCount > 1 ? ` (${pendingReportCount})` : ''}</span>
+                </span>
+              ) : saveState === 'error' ? (
+                <span className="text-rose-300 flex items-center gap-1" role="status">
+                  <AlertCircle className="w-3 h-3" />
+                  <span>Save failed</span>
                 </span>
               ) : (
                 <span className="text-emerald-400 flex items-center gap-1">

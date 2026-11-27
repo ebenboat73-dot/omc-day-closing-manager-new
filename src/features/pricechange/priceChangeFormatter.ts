@@ -56,4 +56,3 @@ export function formatPriceChangeText(
 
   return lines.join('\n');
 }
-

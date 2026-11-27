@@ -146,27 +146,11 @@ Your tasks:
       }
     }
 
-    // Fallback if no GEMINI_API_KEY in dev/testing environment
-    // Graceful simulated AI vision for canvas synthetic photos or test uploads
-    console.log('No GEMINI_API_KEY configured, executing fallback vision analyzer');
-    
-    // Check if the image text or context has a nearby opening value
-    let fallbackReading: number | null = null;
-    if (expectedOpeningValue !== undefined && expectedOpeningValue !== null && expectedOpeningValue > 0) {
-      fallbackReading = Math.round((expectedOpeningValue + 420.5) * 100) / 100;
-    }
-
     return res.json({
-      success: true,
-      model: 'fallback-vision',
-      reading: fallbackReading,
-      confidence: fallbackReading ? 88 : 40,
-      isClear: fallbackReading !== null,
-      meterType: 'electronic_lcd',
-      rawDigitsDetected: fallbackReading ? fallbackReading.toFixed(2) : '',
-      unclearReason: fallbackReading ? null : 'API key not configured. Please enter reading manually.',
-      suggestManualEntry: fallbackReading === null,
-      notes: 'Server-side vision service active.',
+      success: false,
+      error: 'AI meter reading is not configured. Set GEMINI_API_KEY on the server or enter the reading manually.',
+      suggestManualEntry: true,
+      reading: null,
     });
   } catch (error: any) {
     console.error('Error analyzing meter image with Gemini Vision:', error);

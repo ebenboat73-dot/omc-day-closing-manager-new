@@ -15,8 +15,6 @@ import {
   AlertTriangle,
   Image as ImageIcon,
   CheckCircle2,
-  Eye,
-  Info,
 } from 'lucide-react';
 import { analyzeMeterPhotoWithAI, AiVisionResult } from '../../services/aiVisionService';
 import { preprocessMeterImage } from '../ocr/imagePreprocessing';
@@ -328,6 +326,7 @@ export const InAppCameraModal: React.FC<InAppCameraModalProps> = ({
                 >
                   <RefreshCw className="w-4 h-4" />
                 </button>
+
               </div>
             )
           ) : (

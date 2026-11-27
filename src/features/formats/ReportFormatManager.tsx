@@ -10,10 +10,10 @@ import {
   DailyReport,
   ReportFormatSettings,
   DEFAULT_REPORT_FORMAT_SETTINGS,
+  REPORT_FORMAT_PRESETS,
   DischargeReport,
   PriceChangeReport,
 } from '../../types/report';
-import { REPORT_FORMAT_PRESETS } from '../../services/dataService';
 import { generateStandardReportText } from '../sharing/reportFormatter';
 import { formatBeforeDischargeText, formatAfterDischargeText } from '../discharge/dischargeFormatter';
 import { formatPriceChangeText } from '../pricechange/priceChangeFormatter';
@@ -37,8 +37,8 @@ import {
 
 interface ReportFormatManagerProps {
   currentSettings: ReportFormatSettings;
-  onSaveSettings: (settings: ReportFormatSettings) => void;
-  onResetSettings: () => void;
+  onSaveSettings: (settings: ReportFormatSettings) => Promise<void>;
+  onResetSettings: () => Promise<void>;
   sampleReport: DailyReport;
   sampleDischargeReport?: DischargeReport;
   samplePriceChangeReport?: PriceChangeReport;
@@ -59,19 +59,18 @@ export const ReportFormatManager: React.FC<ReportFormatManagerProps> = ({
   const [mobileTab, setMobileTab] = useState<'settings' | 'preview'>('settings');
   const [copied, setCopied] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Apply a preset
-  const handleApplyPreset = (presetKey: string) => {
+  const handleApplyPreset = async (presetKey: string) => {
     const preset = REPORT_FORMAT_PRESETS[presetKey];
     if (preset) {
       const merged: ReportFormatSettings = {
         ...settings,
         ...preset,
-        presetId: presetKey as any,
+        presetId: preset.presetId ?? 'custom',
       };
-      setSettings(merged);
-      onSaveSettings(merged);
-      triggerSaveNotice();
+      await persistSettings(merged);
     }
   };
 
@@ -89,17 +88,34 @@ export const ReportFormatManager: React.FC<ReportFormatManagerProps> = ({
   };
 
   // Save current settings as manager default
+  const persistSettings = async (nextSettings: ReportFormatSettings) => {
+    setSaveError(null);
+    setSaveSuccess(false);
+    try {
+      await onSaveSettings(nextSettings);
+      setSettings(nextSettings);
+      triggerSaveNotice();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Could not save report format settings.');
+    }
+  };
+
   const handleSave = () => {
-    onSaveSettings(settings);
-    triggerSaveNotice();
+    void persistSettings(settings);
   };
 
   // Reset to default
-  const handleReset = () => {
+  const handleReset = async () => {
     if (window.confirm('Reset report format to standard Oborpah Asesewa defaults?')) {
-      onResetSettings();
-      setSettings({ ...DEFAULT_REPORT_FORMAT_SETTINGS });
-      triggerSaveNotice();
+      setSaveError(null);
+      setSaveSuccess(false);
+      try {
+        await onResetSettings();
+        setSettings({ ...DEFAULT_REPORT_FORMAT_SETTINGS });
+        triggerSaveNotice();
+      } catch (error) {
+        setSaveError(error instanceof Error ? error.message : 'Could not reset report format settings.');
+      }
     }
   };
 
@@ -179,6 +195,11 @@ export const ReportFormatManager: React.FC<ReportFormatManagerProps> = ({
         <div className="p-3 bg-emerald-950/40 border border-emerald-500/40 rounded-xl text-emerald-300 text-xs font-semibold flex items-center gap-2 animate-in fade-in duration-200">
           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>Report format preferences successfully saved for your station workspace!</span>
+        </div>
+      )}
+      {saveError && (
+        <div role="alert" className="p-3 bg-rose-950/40 border border-rose-500/40 rounded-xl text-rose-200 text-xs font-semibold">
+          {saveError}
         </div>
       )}
 
