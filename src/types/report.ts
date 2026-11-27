@@ -10,6 +10,7 @@ export interface UserProfile {
   fullName: string;
   stationName?: string;
   role?: string;
+  rememberMe?: boolean;
   createdAt?: string;
 }
 
@@ -70,6 +71,12 @@ export interface ReportPumpReading {
   ocrConfidence?: number;
   ocrStatus: OcrStatus;
   ocrError?: string;
+  aiVisionReading?: number | null;
+  aiVisionConfidence?: number;
+  aiVisionClear?: boolean;
+  aiVisionMeterType?: string;
+  aiVisionRawDigits?: string;
+  aiVisionUnclearReason?: string | null;
   isConfirmed: boolean;
   isRollover: boolean;
   rolloverCapacity: number; // default 100000
@@ -348,4 +355,110 @@ export const DEFAULT_REPORT_FORMAT_SETTINGS: ReportFormatSettings = {
   dischargeShortageLabel: 'SHORTAGE',
   priceChangeTitle: 'PRICE CHANGE REPORT',
   showStockRevaluationGhs: true,
+};
+
+export const REPORT_FORMAT_PRESETS: Record<string, Partial<ReportFormatSettings>> = {
+  oborpah_default: { ...DEFAULT_REPORT_FORMAT_SETTINGS },
+  omc_standard: {
+    presetId: 'omc_standard',
+    stationHeaderCase: 'titlecase',
+    dateFormat: 'DD/MM/YYYY',
+    includeLocation: true,
+    includeTimestamp: true,
+    headerCustomNote: '',
+    footerCustomNote: 'Audited & Confirmed by Station Manager.',
+    currencySymbol: 'GH¢',
+    volumeUnit: 'L',
+    pumpSeparator: ' = ',
+    pumpDecimals: 2,
+    showOpeningMetersInDaily: false,
+    showIndividualPumpSold: true,
+    showTotalLitresSoldLine: true,
+    showProductSalesGhs: true,
+    showPhysicalStock: true,
+    showUnitPrice: true,
+    showVariance: true,
+    varianceLabel: 'Stock Variance',
+    cashAccountTitle: 'FINANCIAL SUMMARY & CASH TILL',
+    totalSalesLabel: 'TOTAL GROSS SALES',
+    expensesStyle: 'itemized',
+    cashToBankLabel: 'CASH TO BANK',
+    showHubtelSection: true,
+    showAnalogueSection: true,
+    dischargeIncludeTruckDriver: true,
+    dischargeBeforeTitle: 'BEFORE FUEL DISCHARGE',
+    dischargeAfterTitle: 'AFTER FUEL DISCHARGE',
+    dischargeOverageLabel: 'OVERAGE GAIN',
+    dischargeShortageLabel: 'SHORTAGE LOSS',
+    priceChangeTitle: 'PRICE CHANGE REVALUATION REPORT',
+    showStockRevaluationGhs: true,
+  },
+  compact: {
+    presetId: 'compact',
+    stationHeaderCase: 'uppercase',
+    dateFormat: 'DD/MM/YYYY',
+    includeLocation: false,
+    includeTimestamp: false,
+    headerCustomNote: '',
+    footerCustomNote: '',
+    currencySymbol: '¢',
+    volumeUnit: '',
+    pumpSeparator: '=',
+    pumpDecimals: 2,
+    showOpeningMetersInDaily: false,
+    showIndividualPumpSold: false,
+    showTotalLitresSoldLine: false,
+    showProductSalesGhs: true,
+    showPhysicalStock: true,
+    showUnitPrice: true,
+    showVariance: true,
+    varianceLabel: 'Var',
+    cashAccountTitle: 'CASH TILL',
+    totalSalesLabel: 'SALES',
+    expensesStyle: 'total_only',
+    cashToBankLabel: 'CASH IN TILL',
+    showHubtelSection: false,
+    showAnalogueSection: false,
+    dischargeIncludeTruckDriver: false,
+    dischargeBeforeTitle: 'BEFORE DISCHARGE',
+    dischargeAfterTitle: 'AFTER DISCHARGE',
+    dischargeOverageLabel: 'OVERAGE',
+    dischargeShortageLabel: 'SHORTAGE',
+    priceChangeTitle: 'PRICE CHANGE',
+    showStockRevaluationGhs: true,
+  },
+  detailed_audit: {
+    presetId: 'detailed_audit',
+    stationHeaderCase: 'uppercase',
+    dateFormat: 'DD/MM/YYYY',
+    includeLocation: true,
+    includeTimestamp: true,
+    headerCustomNote: 'CONFIDENTIAL DAILY AUDIT DISPATCH',
+    footerCustomNote: 'Certified accurate. Subject to head-office audit.',
+    currencySymbol: 'GH¢',
+    volumeUnit: 'Litres',
+    pumpSeparator: ' : ',
+    pumpDecimals: 2,
+    showOpeningMetersInDaily: true,
+    showIndividualPumpSold: true,
+    showTotalLitresSoldLine: true,
+    showProductSalesGhs: true,
+    showPhysicalStock: true,
+    showUnitPrice: true,
+    showVariance: true,
+    varianceLabel: 'Dipping Variance',
+    cashAccountTitle: 'DAILY CASH & SALES RECONCILIATION',
+    totalSalesLabel: 'GROSS PRODUCT SALES',
+    expensesStyle: 'itemized',
+    cashToBankLabel: 'NET CASH FOR BANKING',
+    showHubtelSection: true,
+    showAnalogueSection: true,
+    dischargeIncludeTruckDriver: true,
+    dischargeBeforeTitle: 'STAGE 1: BEFORE DISCHARGE',
+    dischargeAfterTitle: 'STAGE 2: AFTER DISCHARGE',
+    dischargeOverageLabel: 'PRODUCT OVERAGE (+)',
+    dischargeShortageLabel: 'PRODUCT SHORTAGE (-)',
+    priceChangeTitle: 'STATION PRICE CUTOVER & STOCK REVALUATION',
+    showStockRevaluationGhs: true,
+  },
 };

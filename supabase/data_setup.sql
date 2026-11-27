@@ -24,6 +24,12 @@ alter table public.report_pump_readings
   add column if not exists amount_ghs numeric,
   add column if not exists analogue_meter text,
   add column if not exists ocr_error text,
+  add column if not exists ai_vision_reading numeric,
+  add column if not exists ai_vision_confidence integer,
+  add column if not exists ai_vision_clear boolean,
+  add column if not exists ai_vision_meter_type text,
+  add column if not exists ai_vision_raw_digits text,
+  add column if not exists ai_vision_unclear_reason text,
   add column if not exists is_idle_or_optional boolean not null default false;
 
 alter table public.report_stock_entries
@@ -262,7 +268,9 @@ begin
       report_id, pump_id, pump_label_snapshot, product_code_snapshot,
       product_id_snapshot, opening_meter, closing_meter, litres_sold,
       unit_price_snapshot, amount_ghs, analogue_meter, candidate_ocr_reading,
-      ocr_confidence, ocr_status, ocr_error, is_confirmed, is_rollover,
+      ocr_confidence, ocr_status, ocr_error, ai_vision_reading, ai_vision_confidence,
+      ai_vision_clear, ai_vision_meter_type, ai_vision_raw_digits, ai_vision_unclear_reason,
+      is_confirmed, is_rollover,
       rollover_capacity, photo_storage_path, notes, warning, is_idle_or_optional
     )
     values (
@@ -281,6 +289,12 @@ begin
       nullif(pump_item ->> 'ocrConfidence', '')::integer,
       coalesce(pump_item ->> 'ocrStatus', 'idle'),
       pump_item ->> 'ocrError',
+      nullif(pump_item ->> 'aiVisionReading', '')::numeric,
+      nullif(pump_item ->> 'aiVisionConfidence', '')::integer,
+      nullif(pump_item ->> 'aiVisionClear', '')::boolean,
+      pump_item ->> 'aiVisionMeterType',
+      pump_item ->> 'aiVisionRawDigits',
+      pump_item ->> 'aiVisionUnclearReason',
       coalesce((pump_item ->> 'isConfirmed')::boolean, false),
       coalesce((pump_item ->> 'isRollover')::boolean, false),
       coalesce(nullif(pump_item ->> 'rolloverCapacity', '')::numeric, 100000),

@@ -16,6 +16,10 @@ import {
   ConfiguredProduct,
   ConfiguredPump,
   HubtelDetails,
+  DischargeReport,
+  PriceChangeReport,
+  ReportFormatSettings,
+  DEFAULT_REPORT_FORMAT_SETTINGS,
 } from './types/report';
 import {
   getOrCreateWorkspace,
@@ -25,11 +29,22 @@ import {
   saveDailyReport,
   deletePump,
   updateProductPrice,
+  getDischargeReports,
+  saveDischargeReport,
+  deleteDischargeReport,
+  getPriceChangeReports,
+  savePriceChangeReport,
+  deletePriceChangeReport,
+  getReportFormatSettings,
+  saveReportFormatSettings,
+  resetReportFormatSettings,
   syncPendingReports,
 } from './services/repository';
 import { recalculateReport } from './utils/calculations';
 import { ReportHeader } from './features/reports/ReportHeader';
 import { useAuth } from './features/auth/AuthContext';
+import { signOut } from './services/authService';
+import type { AiVisionResult } from './services/aiVisionService';
 import { OnboardingModal } from './features/auth/OnboardingModal';
 import { MeterSequenceGrid } from './features/meters/MeterSequenceGrid';
 import { StockReconciliationSection } from './features/stock/StockReconciliationSection';
@@ -41,33 +56,33 @@ import { BulkUploadModal } from './features/meters/BulkUploadModal';
 import { SendReportModal } from './features/sharing/SendReportModal';
 import { ReportHistoryModal } from './features/reports/ReportHistoryModal';
 import { PhotoPreviewModal } from './features/meters/PhotoPreviewModal';
-import { Fuel, Layers, Receipt, Sliders, Send, Camera, ShieldCheck, ChevronRight, Moon, Sun, Clock } from 'lucide-react';
+import { DischargeReportSection } from './features/discharge/DischargeReportSection';
+import { PriceChangeSection } from './features/pricechange/PriceChangeSection';
+import { ReportFormatManager } from './features/formats/ReportFormatManager';
+import {
+  Fuel,
+  Layers,
+  Receipt,
+  Sliders,
+  Send,
+  Truck,
+  DollarSign,
+  Camera,
+  ShieldCheck,
+  ChevronRight,
+  LogOut,
+  Sparkles,
+} from 'lucide-react';
 
 export default function App() {
   const { user: authenticatedUser } = useAuth();
-  const [currentUser, setCurrentUser] = useState<UserProfile>(() => authenticatedUser ?? {
-    id: '',
-    email: '',
-    fullName: '',
-  });
-  const [workspace, setWorkspace] = useState<StationWorkspace>({
-    id: '',
-    ownerUserId: '',
-    stationName: '',
-    stationLocation: '',
-    omcBrand: 'Onyxma Energy',
-    managerName: '',
-    currencySymbol: '¢',
-    createdAt: '',
-    updatedAt: '',
-  });
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(authenticatedUser);
+  const [workspace, setWorkspace] = useState<StationWorkspace | null>(null);
   const [products, setProducts] = useState<ConfiguredProduct[]>([]);
   const [pumps, setPumps] = useState<ConfiguredPump[]>([]);
 
-  // Selected date (defaults to today's date: 2026-10-14)
-  const [selectedDate, setSelectedDate] = useState<string>(() => {
-    return '2026-10-14';
-  });
+  // Selected date for daily report (defaults to 2026-10-14)
+  const [selectedDate, setSelectedDate] = useState<string>('2026-10-14');
 
   const [report, setReport] = useState<DailyReport | null>(null);
   const [isLoadingData, setIsLoadingData] = useState(true);
@@ -80,9 +95,19 @@ export default function App() {
   const reportSaveRevision = useRef(0);
   const reportSaveTimer = useRef<number | null>(null);
   const dataLoadRevision = useRef(0);
+  const dataOwnerUserId = useRef<string | null>(authenticatedUser?.id ?? null);
+
+  // Discharge & Price Change reports
+  const [dischargeReports, setDischargeReports] = useState<DischargeReport[]>([]);
+  const [priceChangeReports, setPriceChangeReports] = useState<PriceChangeReport[]>([]);
+
+  // Customizable report format settings per manager
+  const [formatSettings, setFormatSettings] = useState<ReportFormatSettings>(DEFAULT_REPORT_FORMAT_SETTINGS);
 
   // Active navigation tab
-  const [activeTab, setActiveTab] = useState<'meters' | 'stock' | 'expenses' | 'setup'>('meters');
+  const [activeTab, setActiveTab] = useState<
+    'meters' | 'stock' | 'discharge' | 'pricechange' | 'expenses' | 'setup' | 'formats'
+  >('meters');
 
   // Modals state
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
@@ -105,16 +130,46 @@ export default function App() {
 
   // Load the account workspace and active report from Supabase.
   const reloadWorkspaceAndData = useCallback(async () => {
-    if (!authenticatedUser) return;
+    if (!authenticatedUser) {
+      if (dataOwnerUserId.current !== null) {
+        dataOwnerUserId.current = null;
+        setCurrentUser(null);
+        setWorkspace(null);
+        setProducts([]);
+        setPumps([]);
+        setReport(null);
+        setDischargeReports([]);
+        setPriceChangeReports([]);
+      }
+      setIsLoadingData(false);
+      return;
+    }
+    if (dataOwnerUserId.current !== authenticatedUser.id) {
+      dataOwnerUserId.current = authenticatedUser.id;
+      setCurrentUser(authenticatedUser);
+      setWorkspace(null);
+      setProducts([]);
+      setPumps([]);
+      setReport(null);
+      setDischargeReports([]);
+      setPriceChangeReports([]);
+      setFormatSettings(DEFAULT_REPORT_FORMAT_SETTINGS);
+      setPendingReportCount(0);
+    }
     const revision = ++dataLoadRevision.current;
     setIsLoadingData(true);
     setDataError(null);
     setDataErrorKind(null);
     try {
       const ws = await getOrCreateWorkspace(authenticatedUser.id);
-      const prods = await getWorkspaceProducts(authenticatedUser.id);
-      const configuredPumps = await getWorkspacePumps(authenticatedUser.id);
-      const loadedReport = await getReportByDate(authenticatedUser.id, selectedDate);
+      const [prods, configuredPumps, loadedReport, dReports, pcReports, settings] = await Promise.all([
+        getWorkspaceProducts(authenticatedUser.id),
+        getWorkspacePumps(authenticatedUser.id),
+        getReportByDate(authenticatedUser.id, selectedDate),
+        getDischargeReports(authenticatedUser.id),
+        getPriceChangeReports(authenticatedUser.id),
+        getReportFormatSettings(authenticatedUser.id),
+      ]);
       if (revision !== dataLoadRevision.current) return;
       setCurrentUser(authenticatedUser);
       setWorkspace(ws);
@@ -122,6 +177,9 @@ export default function App() {
       setPumps(configuredPumps);
       skipNextReportSave.current = true;
       setReport(loadedReport);
+      setDischargeReports(dReports);
+      setPriceChangeReports(pcReports);
+      setFormatSettings(settings);
       setSaveState(loadedReport.saveStatus === 'failed' ? 'offline' : 'saved');
     } catch (error) {
       if (revision === dataLoadRevision.current) {
@@ -153,7 +211,7 @@ export default function App() {
   }, [authenticatedUser]);
 
   useEffect(() => {
-    reloadWorkspaceAndData();
+    void reloadWorkspaceAndData();
   }, [reloadWorkspaceAndData]);
 
   const saveReportSnapshot = useCallback((snapshot: DailyReport, revision: number) => {
@@ -273,6 +331,20 @@ export default function App() {
     }
   }, [dataErrorKind, report, selectedDate, reloadWorkspaceAndData, reloadConfiguration, authenticatedUser, retryReportSave]);
 
+  const reloadWorkspaceDataSafely = useCallback(async () => {
+    if (report && authenticatedUser && report.reportDate === selectedDate) {
+      if (reportSaveTimer.current !== null) window.clearTimeout(reportSaveTimer.current);
+      const revision = ++reportSaveRevision.current;
+      setSaveState('saving');
+      try {
+        await saveReportSnapshot(report, revision);
+      } catch {
+        return;
+      }
+    }
+    await reloadWorkspaceAndData();
+  }, [report, authenticatedUser, selectedDate, saveReportSnapshot, reloadWorkspaceAndData]);
+
   // Show onboarding for first-time users (stored per browser)
   const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
     try {
@@ -288,6 +360,15 @@ export default function App() {
       try { localStorage.setItem('omc_seen_onboarding', '1'); } catch (e) {}
     }
   }, [showOnboarding]);
+  // Auth handler: Sign out
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not sign out.');
+      setDataErrorKind('configuration');
+    }
+  };
 
   // Update a single pump reading
   const handleUpdatePump = (readingId: string, updated: Partial<ReportPumpReading>) => {
@@ -306,7 +387,7 @@ export default function App() {
 
   // Remove / Delete a pump (User requirement: "available default pumps, some should be removable")
   const handleRemovePump = (readingId: string) => {
-    if (!report) return;
+    if (!report || !currentUser) return;
     const target = report.pumps.find((p) => p.id === readingId);
     if (!target) return;
 
@@ -335,7 +416,7 @@ export default function App() {
 
   // Update product unit price
   const handleUpdateUnitPrice = (productCode: string, newPrice: number) => {
-    if (!report) return;
+    if (!report || !currentUser) return;
 
     updateProductPrice(currentUser.id, productCode, newPrice)
       .then(setProducts)
@@ -443,7 +524,8 @@ export default function App() {
   const handleAcceptCameraPhoto = (
     photoDataUrl: string,
     candidateReading?: number | null,
-    confidence?: number
+    confidence?: number,
+    metadata?: Partial<AiVisionResult>
   ) => {
     if (!activeCameraPump || !report) return;
 
@@ -453,6 +535,12 @@ export default function App() {
       candidateOcrReading: candidateReading ?? activeCameraPump.candidateOcrReading,
       ocrConfidence: confidence ?? activeCameraPump.ocrConfidence,
       ocrStatus: candidateReading !== null && candidateReading !== undefined ? 'candidate' : 'idle',
+      aiVisionReading: candidateReading ?? activeCameraPump.aiVisionReading,
+      aiVisionConfidence: confidence ?? activeCameraPump.aiVisionConfidence,
+      aiVisionClear: metadata?.isClear ?? (candidateReading !== null && candidateReading !== undefined),
+      aiVisionMeterType: metadata?.meterType,
+      aiVisionRawDigits: metadata?.rawDigitsDetected,
+      aiVisionUnclearReason: metadata?.unclearReason,
     };
 
     handleUpdatePump(pumpReadingId, partial);
@@ -480,7 +568,7 @@ export default function App() {
   };
 
   // Update report status (e.g. sent via WhatsApp)
-  const handleUpdateStatus = (status: ReportStatus, sentVia?: any) => {
+  const handleUpdateStatus = (status: ReportStatus, sentVia?: DailyReport['sentVia']) => {
     if (!report) return;
     setReport((prev) => {
       if (!prev) return null;
@@ -503,18 +591,99 @@ export default function App() {
     });
   };
 
-  if (isLoadingData || (!report && !dataError)) {
+  // Discharge reports handlers
+  const handleSaveDischarge = async (dReport: DischargeReport) => {
+    if (!currentUser) return;
+    try {
+      const saved = await saveDischargeReport(currentUser.id, dReport);
+      setDischargeReports((previous) => [saved, ...previous.filter((item) => item.id !== saved.id)]);
+      setDataError(null);
+      setDataErrorKind(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not save the discharge report.');
+      setDataErrorKind('configuration');
+    }
+  };
+
+  const handleDeleteDischarge = async (reportId: string) => {
+    if (!currentUser) return;
+    try {
+      await deleteDischargeReport(currentUser.id, reportId);
+      setDischargeReports((previous) => previous.filter((item) => item.id !== reportId));
+      setDataError(null);
+      setDataErrorKind(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not delete the discharge report.');
+      setDataErrorKind('configuration');
+    }
+  };
+
+  // Price change reports handlers
+  const handleSavePriceChange = async (pcReport: PriceChangeReport) => {
+    if (!currentUser) return;
+    try {
+      const saved = await savePriceChangeReport(currentUser.id, pcReport);
+      setPriceChangeReports((previous) => [saved, ...previous.filter((item) => item.id !== saved.id)]);
+      setDataError(null);
+      setDataErrorKind(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not save the price change report.');
+      setDataErrorKind('configuration');
+    }
+  };
+
+  const handleDeletePriceChange = async (reportId: string) => {
+    if (!currentUser) return;
+    try {
+      await deletePriceChangeReport(currentUser.id, reportId);
+      setPriceChangeReports((previous) => previous.filter((item) => item.id !== reportId));
+      setDataError(null);
+      setDataErrorKind(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not delete the price change report.');
+      setDataErrorKind('configuration');
+    }
+  };
+
+  // Format settings handlers
+  const handleSaveFormatSettings = async (updated: ReportFormatSettings) => {
+    if (!currentUser) throw new Error('Sign in before saving report format settings.');
+    try {
+      setFormatSettings(await saveReportFormatSettings(currentUser.id, updated));
+      setDataError(null);
+      setDataErrorKind(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not save report format settings.');
+      setDataErrorKind('configuration');
+      throw error;
+    }
+  };
+
+  const handleResetFormatSettings = async () => {
+    if (!currentUser) throw new Error('Sign in before resetting report format settings.');
+    try {
+      setFormatSettings(await resetReportFormatSettings(currentUser.id));
+      setDataError(null);
+      setDataErrorKind(null);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not reset report format settings.');
+      setDataErrorKind('configuration');
+      throw error;
+    }
+  };
+
+  if (!currentUser || isLoadingData || ((!report || !workspace) && !dataError)) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4">
         <div className="text-center space-y-3">
           <div className="w-10 h-10 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-sm font-semibold text-slate-300">Loading station workspace...</p>
+          <p className="text-sm font-semibold text-slate-300">Opening station workspace...</p>
         </div>
       </div>
     );
   }
 
-  if (!report || report.reportDate !== selectedDate) {
+  if (!report || !workspace || report.reportDate !== selectedDate) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4">
         <div className="max-w-md space-y-4 text-center">
@@ -541,6 +710,8 @@ export default function App() {
         onOpenReview={() => setIsSendModalOpen(true)}
         saveState={saveState}
         pendingReportCount={pendingReportCount}
+        onSignOut={handleSignOut}
+        onOpenFormatSettings={() => setActiveTab('formats')}
       />
 
       {/* Main Container */}
@@ -553,25 +724,56 @@ export default function App() {
             </button>
           </div>
         )}
-        {/* Shift Type & Quick Config Bar */}
+        {/* Report Type & Live Price Status Bar */}
         <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/70 p-3 rounded-2xl border border-slate-800 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="text-slate-400 font-semibold">Report Shift:</span>
-            <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
-              {(['Evening Report', 'Morning Report', 'Full Day'] as const).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => handleUpdateShiftType(s)}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                    report.shiftType === s
-                      ? 'bg-amber-500 text-slate-950 shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {s}
-                </button>
-              ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-slate-400 font-semibold flex items-center gap-1.5">
+              <span>Report Type:</span>
+            </span>
+            <div className="flex flex-wrap items-center bg-slate-950 p-1 rounded-xl border border-slate-800 gap-1">
+              {[
+                { id: 'Morning Report', label: 'Morning' },
+                { id: 'Evening Report', label: 'Evening' },
+                { id: 'Price Change Report', label: 'Price Change' },
+                { id: 'Discharge Report', label: 'Discharge' },
+              ].map(({ id, label }) => {
+                const isSelected =
+                  report.shiftType === id ||
+                  (id === 'Discharge Report' && activeTab === 'discharge') ||
+                  (id === 'Price Change Report' && (report.shiftType === 'Price Change Report' || activeTab === 'pricechange'));
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => {
+                      handleUpdateShiftType(id);
+                      if (id === 'Discharge Report') {
+                        setActiveTab('discharge');
+                      } else if (id === 'Price Change Report') {
+                        // User can prepare the price change daily report or view revaluation
+                        if (activeTab === 'discharge') {
+                          setActiveTab('meters');
+                        }
+                      } else {
+                        if (activeTab === 'discharge' || activeTab === 'pricechange') {
+                          setActiveTab('meters');
+                        }
+                      }
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                      isSelected
+                        ? id === 'Discharge Report'
+                          ? 'bg-purple-500 text-white shadow-sm'
+                          : id === 'Price Change Report'
+                          ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                          : 'bg-amber-500 text-slate-950 shadow-sm'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                    }`}
+                  >
+                    <span>{id}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -620,6 +822,34 @@ export default function App() {
 
           <button
             type="button"
+            id="tab-discharge"
+            onClick={() => setActiveTab('discharge')}
+            className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 whitespace-nowrap ${
+              activeTab === 'discharge'
+                ? 'bg-purple-500 text-white shadow-md shadow-purple-500/20'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <Truck className="w-4 h-4" />
+            <span>Discharge Reports</span>
+          </button>
+
+          <button
+            type="button"
+            id="tab-pricechange"
+            onClick={() => setActiveTab('pricechange')}
+            className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 whitespace-nowrap ${
+              activeTab === 'pricechange'
+                ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <DollarSign className="w-4 h-4" />
+            <span>Price Change</span>
+          </button>
+
+          <button
+            type="button"
             id="tab-expenses"
             onClick={() => setActiveTab('expenses')}
             className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 whitespace-nowrap ${
@@ -644,6 +874,20 @@ export default function App() {
           >
             <Sliders className="w-4 h-4" />
             <span>Pump Setup</span>
+          </button>
+
+          <button
+            type="button"
+            id="tab-formats"
+            onClick={() => setActiveTab('formats')}
+            className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 whitespace-nowrap ${
+              activeTab === 'formats'
+                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <Sliders className="w-4 h-4 text-cyan-400" />
+            <span>Report Formats</span>
           </button>
         </div>
 
@@ -675,7 +919,35 @@ export default function App() {
           />
         )}
 
-        {/* Tab 3: Daily Expenses */}
+        {/* Tab 3: Dedicated Fuel Discharge Reports */}
+        {activeTab === 'discharge' && (
+          <DischargeReportSection
+            userId={currentUser.id}
+            workspace={workspace}
+            products={products}
+            pumps={pumps}
+            dischargeReports={dischargeReports}
+            onSaveReport={handleSaveDischarge}
+            onDeleteReport={handleDeleteDischarge}
+            formatSettings={formatSettings}
+          />
+        )}
+
+        {/* Tab 4: Price Change Reports & Stock Revaluation */}
+        {activeTab === 'pricechange' && (
+          <PriceChangeSection
+            userId={currentUser.id}
+            workspace={workspace}
+            products={products}
+            pumps={pumps}
+            priceChangeReports={priceChangeReports}
+            onSaveReport={handleSavePriceChange}
+            onDeleteReport={handleDeletePriceChange}
+            formatSettings={formatSettings}
+          />
+        )}
+
+        {/* Tab 5: Daily Expenses */}
         {activeTab === 'expenses' && (
           <ExpensesSection
             expenses={report.expenses}
@@ -683,14 +955,26 @@ export default function App() {
           />
         )}
 
-        {/* Tab 4: Dynamic Pump & Product Setup */}
+        {/* Tab 6: Dynamic Pump & Product Setup */}
         {activeTab === 'setup' && (
           <PumpConfigManager
             userId={currentUser.id}
             workspace={workspace}
             products={products}
             pumps={pumps}
-            onConfigChanged={reloadConfiguration}
+            onConfigChanged={reloadWorkspaceDataSafely}
+          />
+        )}
+
+        {/* Tab 7: Customizable Station Report Formats Studio */}
+        {activeTab === 'formats' && (
+          <ReportFormatManager
+            currentSettings={formatSettings}
+            onSaveSettings={handleSaveFormatSettings}
+            onResetSettings={handleResetFormatSettings}
+            sampleReport={report}
+            sampleDischargeReport={dischargeReports[0]}
+            samplePriceChangeReport={priceChangeReports[0]}
           />
         )}
       </main>
@@ -747,7 +1031,7 @@ export default function App() {
         onClose={() => setIsAccountModalOpen(false)}
         currentUser={currentUser}
         workspace={workspace}
-        onUserOrWorkspaceSwitched={reloadConfiguration}
+        onUserOrWorkspaceSwitched={reloadWorkspaceDataSafely}
       />
 
       {/* Onboarding modal shown to new users */}
@@ -762,12 +1046,14 @@ export default function App() {
         onPreviewPhoto={handlePreviewPhoto}
       />
 
-      {/* Review & Share Modal with Oborpah Asesewa Format */}
+      {/* Review & Share Modal with Customizable Station Format */}
       <SendReportModal
         isOpen={isSendModalOpen}
         onClose={() => setIsSendModalOpen(false)}
         report={report}
         onUpdateStatus={handleUpdateStatus}
+        formatSettings={formatSettings}
+        onOpenFormatSettings={() => setActiveTab('formats')}
       />
 
       {/* History Modal */}

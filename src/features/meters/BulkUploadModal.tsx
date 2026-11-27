@@ -5,9 +5,9 @@
 
 import React, { useState } from 'react';
 import { DailyReport, ReportPumpReading } from '../../types/report';
-import { X, Upload, Sparkles, Check, RefreshCw, Trash2, CheckCircle2 } from 'lucide-react';
+import { X, Upload, Sparkles, Check, RefreshCw, Trash2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { preprocessMeterImage } from '../ocr/imagePreprocessing';
-import { recognizeMeterImage } from '../ocr/ocrService';
+import { analyzeMeterPhotoWithAI } from '../../services/aiVisionService';
 import { generateAllSamplePhotos } from '../ocr/sampleMeterImages';
 
 interface BulkUploadModalProps {
@@ -78,8 +78,8 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
     setSlots(newSlots);
   };
 
-  // Run Tesseract OCR on all slots
-  const handleRunOcrAll = async () => {
+  // Run Gemini AI Vision on all slots
+  const handleRunAiVisionAll = async () => {
     if (slots.length === 0) return;
     setIsProcessingBatch(true);
     setBatchProgress({ current: 0, total: slots.length });
@@ -95,16 +95,21 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
       const expectedOpening = pumpReading?.openingMeter;
 
       try {
-        const ocrRes = await recognizeMeterImage(slot.processedDataUrl, expectedOpening);
-        slot.candidateNumber = ocrRes.candidate;
-        slot.confidence = ocrRes.confidence;
-        slot.status = ocrRes.candidate !== null ? 'candidate' : 'failed';
-        if (ocrRes.candidate === null) {
-          slot.error = 'Unclear reading';
+        const visionRes = await analyzeMeterPhotoWithAI(slot.processedDataUrl, {
+          expectedOpeningValue: expectedOpening,
+          pumpLabel: slot.pumpLabel,
+          productCode: slot.productCode,
+        });
+
+        slot.candidateNumber = visionRes.reading;
+        slot.confidence = visionRes.confidence;
+        slot.status = visionRes.reading !== null && visionRes.isClear ? 'candidate' : 'failed';
+        if (visionRes.reading === null || !visionRes.isClear) {
+          slot.error = visionRes.unclearReason || 'Unclear or blurry digits';
         }
       } catch (err: any) {
         slot.status = 'failed';
-        slot.error = err?.message || 'OCR failed';
+        slot.error = err?.message || 'AI Vision failed';
       }
 
       setBatchProgress({ current: i + 1, total: slots.length });
@@ -175,10 +180,10 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
           <div>
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <Upload className="w-5 h-5 text-amber-400" />
-              <span>Bulk Meter Photo Upload & OCR Processing</span>
+              <span>Bulk Meter Photo Upload & AI Vision Processing</span>
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Select multiple photos at once. Review OCR suggestions before applying.
+              Select multiple photos at once. AI Vision reads dispenser counters and lets you review before applying.
             </p>
           </div>
 
@@ -219,7 +224,7 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={handleRunOcrAll}
+                onClick={handleRunAiVisionAll}
                 disabled={isProcessingBatch}
                 className="px-3.5 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5"
               >
@@ -230,8 +235,8 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
                 )}
                 <span>
                   {isProcessingBatch
-                    ? `Processing (${batchProgress.current}/${batchProgress.total})`
-                    : 'Run OCR on All'}
+                    ? `AI Analyzing (${batchProgress.current}/${batchProgress.total})`
+                    : 'Analyze All with AI Vision'}
                 </span>
               </button>
 

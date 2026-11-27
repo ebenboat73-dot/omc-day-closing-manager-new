@@ -19,9 +19,9 @@ import {
   Gauge,
   PowerOff,
   CheckCircle2,
+  Info,
 } from 'lucide-react';
-import { preprocessMeterImage } from '../ocr/imagePreprocessing';
-import { recognizeMeterImage } from '../ocr/ocrService';
+import { analyzeMeterPhotoWithAI } from '../../services/aiVisionService';
 
 interface PumpMeterCardProps {
   reading: ReportPumpReading;
@@ -44,8 +44,7 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
   onPreviewPhoto,
   onOpenCamera,
 }) => {
-  const [isProcessingOcr, setIsProcessingOcr] = useState(false);
-  const [ocrProgress, setOcrProgress] = useState(0);
+  const [isProcessingAi, setIsProcessingAi] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Compute sales helper
@@ -155,22 +154,50 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
     });
   };
 
-  const handleAcceptOcr = () => {
-    if (reading.candidateOcrReading !== null && reading.candidateOcrReading !== undefined) {
+  const handleAcceptAiReading = () => {
+    const candidate = reading.candidateOcrReading ?? reading.aiVisionReading;
+    if (candidate !== null && candidate !== undefined) {
       const { litres, amount, warning } = computeSales(
         reading.openingMeter,
-        reading.candidateOcrReading,
+        candidate,
         reading.isRollover,
         reading.rolloverCapacity || 100000
       );
       onUpdate({
-        closingMeter: reading.candidateOcrReading,
+        closingMeter: candidate,
         litresSold: litres,
         amountGhs: amount,
         warning,
         ocrStatus: 'confirmed',
         isConfirmed: true,
       });
+    }
+  };
+
+  const handleRunAiVision = async () => {
+    if (!reading.photoDataUrl) return;
+    setIsProcessingAi(true);
+    try {
+      const res = await analyzeMeterPhotoWithAI(reading.photoDataUrl, {
+        expectedOpeningValue: reading.openingMeter,
+        pumpLabel: reading.pumpLabelSnapshot,
+        productCode: reading.productCodeSnapshot,
+      });
+      onUpdate({
+        candidateOcrReading: res.reading,
+        ocrConfidence: res.confidence,
+        ocrStatus: res.reading !== null ? 'candidate' : 'failed',
+        aiVisionReading: res.reading,
+        aiVisionConfidence: res.confidence,
+        aiVisionClear: res.isClear,
+        aiVisionMeterType: res.meterType,
+        aiVisionRawDigits: res.rawDigitsDetected,
+        aiVisionUnclearReason: res.unclearReason,
+      });
+    } catch (e) {
+      console.warn('AI analysis error on pump card:', e);
+    } finally {
+      setIsProcessingAi(false);
     }
   };
 
@@ -365,28 +392,72 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
           </div>
         </div>
 
-        {/* OCR Candidate Suggestion Banner */}
-        {reading.candidateOcrReading !== null &&
-          reading.closingMeter !== reading.candidateOcrReading && (
-            <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-                <div>
-                  <span className="text-[10px] text-slate-400 block">OCR Detected Suggestion:</span>
-                  <span className="font-mono text-sm font-bold text-amber-300">
-                    {reading.candidateOcrReading.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+        {/* AI Vision Candidate Review Banner */}
+        {((reading.candidateOcrReading !== null && reading.candidateOcrReading !== undefined && reading.closingMeter !== reading.candidateOcrReading) ||
+          (reading.aiVisionReading !== null && reading.aiVisionReading !== undefined && reading.closingMeter !== reading.aiVisionReading)) && (
+          <div className="p-3 rounded-xl bg-slate-950/80 border border-emerald-500/40 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="text-[11px] font-bold text-slate-200">AI Vision Detected Meter Reading</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                  {reading.aiVisionConfidence || reading.ocrConfidence || 95}% Confidence
+                </span>
+                {reading.aiVisionMeterType && (
+                  <span className="text-[10px] text-slate-400 font-mono capitalize">
+                    {reading.aiVisionMeterType.replace('_', ' ')}
                   </span>
-                </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-baseline justify-between pt-0.5">
+              <div className="flex items-baseline gap-2">
+                <span className="font-mono text-xl font-black text-emerald-400">
+                  {(reading.candidateOcrReading ?? reading.aiVisionReading)?.toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 3,
+                  })}
+                </span>
+                <span className="text-xs font-semibold text-slate-400">Litres</span>
               </div>
               <button
                 type="button"
-                onClick={handleAcceptOcr}
-                className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow transition-all"
+                onClick={handleAcceptAiReading}
+                className="px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow transition-all active:scale-95 flex items-center gap-1.5"
               >
-                Apply Suggestion
+                <Check className="w-3.5 h-3.5" />
+                <span>Confirm & Apply</span>
               </button>
             </div>
-          )}
+          </div>
+        )}
+
+        {/* AI Vision Unclear Photo Warning */}
+        {reading.photoDataUrl && (reading.aiVisionClear === false || reading.aiVisionUnclearReason) && (
+          <div className="p-2.5 rounded-xl bg-amber-950/30 border border-amber-500/40 flex items-start justify-between gap-2 text-xs">
+            <div className="flex items-start gap-2 text-amber-300">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold text-amber-200 block">AI Notice: Photo Unclear</span>
+                <span className="text-[11px] text-slate-300">
+                  {reading.aiVisionUnclearReason || 'Digits are blurred, obscured, or have glare. Please capture a clearer photo or enter manually.'}
+                </span>
+              </div>
+            </div>
+            {onOpenCamera && (
+              <button
+                type="button"
+                onClick={() => onOpenCamera(reading)}
+                className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-semibold text-[11px] border border-amber-500/30 shrink-0"
+              >
+                Retake
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Attached Photo Thumbnail */}
         {reading.photoDataUrl && (
@@ -398,21 +469,38 @@ export const PumpMeterCard: React.FC<PumpMeterCardProps> = ({
                 className="w-10 h-10 rounded-lg object-cover border border-slate-700 cursor-pointer"
                 onClick={() => onPreviewPhoto?.(reading.photoDataUrl!, `${reading.pumpLabelSnapshot} Meter Photo`)}
               />
-              <span className="text-xs font-semibold text-slate-300">Meter Photo Attached</span>
+              <div>
+                <span className="text-xs font-semibold text-slate-300 block">Meter Photo Attached</span>
+                <span className="text-[10px] text-slate-500 font-mono">
+                  {reading.isConfirmed ? 'Verified & Linked' : 'Awaiting confirmation'}
+                </span>
+              </div>
             </div>
 
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleRunAiVision}
+                disabled={isProcessingAi}
+                className="px-2 py-1 text-[11px] font-bold rounded-md bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 flex items-center gap-1"
+                title="Scan with AI Vision"
+              >
+                <RefreshCw className={`w-3 h-3 ${isProcessingAi ? 'animate-spin' : ''}`} />
+                <span>{isProcessingAi ? 'Scanning...' : 'AI Scan'}</span>
+              </button>
               <button
                 type="button"
                 onClick={() => onPreviewPhoto?.(reading.photoDataUrl!, `${reading.pumpLabelSnapshot} Meter Photo`)}
                 className="p-1 text-slate-400 hover:text-white"
+                title="View full photo"
               >
                 <Eye className="w-4 h-4" />
               </button>
               <button
                 type="button"
-                onClick={() => onUpdate({ photoDataUrl: undefined, candidateOcrReading: null })}
+                onClick={() => onUpdate({ photoDataUrl: undefined, candidateOcrReading: null, aiVisionReading: null, aiVisionUnclearReason: null })}
                 className="p-1 text-slate-400 hover:text-rose-400"
+                title="Delete photo"
               >
                 <X className="w-4 h-4" />
               </button>
